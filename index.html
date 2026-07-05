@@ -1,0 +1,1265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tailor Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo } from 'https://esm.sh/react@18';
+        import { createRoot } from 'https://esm.sh/react-dom@18/client';
+        import {
+          BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+          XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+        } from 'https://esm.sh/recharts@2.12.0';
+        import {
+          LayoutDashboard, Shirt, Wallet, Users, Banknote, TrendingUp,
+          Plus, Trash2, Pencil, X, Check, Search, ChevronDown, ChevronRight
+        } from 'https://esm.sh/lucide-react@0.360.0';
+
+/* ---------------------------------- Cloud Config ---------------------------------- */
+const API_URL = "https://script.google.com/macros/s/AKfycbyKnDIvktjaRSITpULKVXwgBsDF4LCTNvK1yIBCvkS8Jo9JFy_0w_m9Cq0oetxkMxkO/exec";
+
+/* ---------------------------------- helpers ---------------------------------- */
+
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const money = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+
+const PALETTE = ["#B7791F", "#2C3E50", "#7C9885", "#B33F3F", "#6B5B95", "#3D8B8B", "#A9713C", "#4A5859"];
+
+const STATUS_OPTIONS = ["Pending", "Cutting", "Stitching", "Ready", "Delivered", "Cancelled"];
+const STATUS_COLOR = {
+  Pending: "bg-stone-200 text-stone-700",
+  Cutting: "bg-amber-100 text-amber-800",
+  Stitching: "bg-indigo-100 text-indigo-800",
+  Ready: "bg-teal-100 text-teal-800",
+  Delivered: "bg-emerald-100 text-emerald-800",
+  Cancelled: "bg-rose-100 text-rose-700",
+};
+
+const DEFAULT_FIELD_MAP = {
+  Pant: ["Hip Size", "Length", "Thigh Size"],
+  Trouser: ["Hip Size", "Length", "Thigh Size"],
+  Shirt: ["Chest", "Sleeve Length", "Shoulder", "Length", "Arm Size"],
+  Top: ["Length"],
+  Bottom: ["Length", "Waist"],
+  Coat: ["Length", "Chest"],
+  Binoform: ["Chest", "Length"],
+};
+
+function makeFields(type) {
+  return (DEFAULT_FIELD_MAP[type] || ["Size"]).map((n) => ({ id: uid(), name: n, value: "" }));
+}
+
+const SET_TYPES = {
+  Male: {
+    "Pant & Shirt": ["Pant", "Shirt"],
+    "Trouser & Shirt": ["Trouser", "Shirt"],
+  },
+  Female: {
+    "Chudi Set": ["Top", "Bottom", "Coat"],
+    "Binoform Set": ["Binoform", "Bottom"],
+  },
+};
+
+function buildGarments(gender, setType) {
+  const types = SET_TYPES[gender][setType];
+  return types.map((type) => ({ id: uid(), type, fields: makeFields(type) }));
+}
+
+function countBy(arr, keyFn) {
+  const m = {};
+  arr.forEach((item) => {
+    const k = keyFn(item) || "Unknown";
+    m[k] = (m[k] || 0) + 1;
+  });
+  return Object.entries(m).map(([name, value]) => ({ name, value }));
+}
+
+function sumBy(arr, keyFn, valFn) {
+  const m = {};
+  arr.forEach((item) => {
+    const k = keyFn(item) || "Unknown";
+    m[k] = (m[k] || 0) + (parseFloat(valFn(item)) || 0);
+  });
+  return Object.entries(m).map(([name, value]) => ({ name, value: Math.round(value * 100) / 100 }));
+}
+
+function sortByDate(data) {
+  return [...data].sort((a, b) => (a.name > b.name ? 1 : -1));
+}
+
+/* ---------------------------------- storage ---------------------------------- */
+const KEYS = { orders: "orders", expenses: "expenses", workers: "workers", activities: "activities", payRates: "payRates", clothTypes: "clothTypes" };
+
+const getCredentials = () => ({
+  username: sessionStorage.getItem("vvsk_user"),
+  password: sessionStorage.getItem("vvsk_pass")
+});
+
+async function loadKey(key, fallback) {
+  const { username, password } = getCredentials();
+  try {
+    const res = await fetch(`${API_URL}?key=${key}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`);
+    const data = await res.json();
+    return data && !data.error && (Array.isArray(data) ? data.length !== 0 : Object.keys(data).length !== 0) ? data : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+async function saveKey(key, value) {
+  const { username, password } = getCredentials();
+  try {
+    await fetch(API_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save", key: key, value: value, username, password })
+    });
+  } catch (e) {
+    console.error("Save failed", e);
+  }
+}
+
+/* ---------------------------------- small UI atoms ---------------------------------- */
+
+function Card({ children, className = "" }) {
+  return (
+    <div className={`bg-white border border-stone-200 rounded-lg shadow-sm ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+function SectionTitle({ children, sub }) {
+  return (
+    <div className="mb-4">
+      <h2 className="font-display text-xl text-slate-800 tracking-tight">{children}</h2>
+      {sub && <p className="text-sm text-stone-500 mt-0.5">{sub}</p>}
+      <div className="tape-rule mt-2" />
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label className="block">
+      <span className="block text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+const inputCls =
+  "w-full rounded-md border border-stone-300 bg-white px-3 py-2 text-sm text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-amber-600/40 focus:border-amber-600";
+const textInputCls = inputCls.replace("font-mono", "");
+const selectCls = textInputCls + " appearance-none";
+const btnPrimary =
+  "inline-flex items-center gap-1.5 rounded-md bg-slate-800 px-3.5 py-2 text-sm font-medium text-white hover:bg-slate-700 transition-colors";
+const btnGhost =
+  "inline-flex items-center gap-1.5 rounded-md border border-stone-300 px-3.5 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50 transition-colors";
+const btnDanger = "inline-flex items-center justify-center rounded-md p-1.5 text-rose-500 hover:bg-rose-50";
+
+function StatCard({ label, value, icon: Icon, tone = "slate" }) {
+  const toneMap = {
+    slate: "text-slate-800",
+    amber: "text-amber-700",
+    emerald: "text-emerald-700",
+    rose: "text-rose-600",
+  };
+  return (
+    <Card className="p-4 flex items-center gap-3">
+      <div className="h-10 w-10 rounded-md bg-stone-100 flex items-center justify-center shrink-0">
+        <Icon className={`h-5 w-5 ${toneMap[tone]}`} />
+      </div>
+      <div className="min-w-0">
+        <div className="text-xs text-stone-500 uppercase tracking-wide">{label}</div>
+        <div className={`text-lg font-mono font-semibold ${toneMap[tone]} truncate`}>{value}</div>
+      </div>
+    </Card>
+  );
+}
+
+function EmptyState({ text }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-14 text-stone-400">
+      <Ruler className="h-8 w-8 mb-2 opacity-40" />
+      <p className="text-sm">{text}</p>
+    </div>
+  );
+}
+function Ruler(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" {...props}>
+      <rect x="2" y="7" width="20" height="10" rx="1.5" />
+      <path d="M6 7v3M9 7v2M12 7v3M15 7v2M18 7v3" />
+    </svg>
+  );
+}
+
+function ChartTypeAndMetricPicker({ metric, setMetric, chartType, setChartType, metricOptions }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      <select className={selectCls + " w-auto"} value={metric} onChange={(e) => setMetric(e.target.value)}>
+        {metricOptions.map((m) => (
+          <option key={m.value} value={m.value}>{m.label}</option>
+        ))}
+      </select>
+      <select className={selectCls + " w-auto"} value={chartType} onChange={(e) => setChartType(e.target.value)}>
+        <option value="bar">Bar chart</option>
+        <option value="line">Line chart</option>
+        <option value="pie">Pie chart</option>
+      </select>
+    </div>
+  );
+}
+
+function ChartRenderer({ data, type }) {
+  if (!data || data.length === 0) return <EmptyState text="Not enough data yet for this chart." />;
+  if (type === "pie") {
+    return (
+      <ResponsiveContainer width="100%" height={300}>
+        <PieChart>
+          <Pie data={data} dataKey="value" nameKey="name" outerRadius={105} label={(d) => d.name}>
+            {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+          </Pie>
+          <Tooltip />
+          <Legend />
+        </PieChart>
+      </ResponsiveContainer>
+    );
+  }
+  if (type === "line") {
+    return (
+      <ResponsiveContainer width="100%" height={300}>
+        <LineChart data={data} margin={{ left: 4, right: 16, top: 8, bottom: 4 }}>
+          <CartesianGrid stroke="#EFEAE0" />
+          <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+          <YAxis tick={{ fontSize: 11 }} />
+          <Tooltip />
+          <Line type="monotone" dataKey="value" stroke="#B7791F" strokeWidth={2.5} dot={{ r: 3 }} />
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  }
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <BarChart data={data} margin={{ left: 4, right: 16, top: 8, bottom: 4 }}>
+        <CartesianGrid stroke="#EFEAE0" />
+        <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+        <YAxis tick={{ fontSize: 11 }} />
+        <Tooltip />
+        <Bar dataKey="value" fill="#2C3E50" radius={[3, 3, 0, 0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+/* ---------------------------------- Measurement Box ---------------------------------- */
+
+function MeasurementBox({ garment, onChange, onRemoveGarmentField, onAddGarmentField, onRenameField }) {
+  return (
+    <div className="border border-stone-200 rounded-md p-3 bg-stone-50/60">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-sm font-semibold text-slate-700">{garment.type}</span>
+        <button type="button" onClick={onAddGarmentField} className="text-xs text-amber-700 hover:text-amber-900 inline-flex items-center gap-1">
+          <Plus className="h-3.5 w-3.5" /> Add box
+        </button>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {garment.fields.map((f) => (
+          <div key={f.id} className="relative">
+            <input
+              className="w-full text-[10px] uppercase tracking-wide text-stone-500 bg-transparent border-b border-stone-300 mb-1 focus:outline-none focus:border-amber-600"
+              value={f.name}
+              onChange={(e) => onRenameField(f.id, e.target.value)}
+            />
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                step="0.1"
+                placeholder="0.0"
+                className="w-full rounded border border-stone-300 px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-amber-600"
+                value={f.value}
+                onChange={(e) => onChange(f.id, e.target.value)}
+              />
+              <button type="button" onClick={() => onRemoveGarmentField(f.id)} className="text-stone-300 hover:text-rose-500">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------- Orders Tab ---------------------------------- */
+
+function emptyDraft() {
+  return {
+    id: null,
+    name: "",
+    mobile: "",
+    status: "Pending",
+    gender: "Male",
+    setType: "Pant & Shirt",
+    garments: buildGarments("Male", "Pant & Shirt"),
+    profit: "",
+    date: todayStr(),
+  };
+}
+
+function OrdersTab({ orders, setOrders }) {
+  const [draft, setDraft] = useState(emptyDraft());
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [genderFilter, setGenderFilter] = useState("All");
+  const [expandedId, setExpandedId] = useState(null);
+  const [metric, setMetric] = useState("orders_by_settype");
+  const [chartType, setChartType] = useState("bar");
+
+  function updateGender(gender) {
+    const firstSetType = Object.keys(SET_TYPES[gender])[0];
+    setDraft((d) => ({ ...d, gender, setType: firstSetType, garments: buildGarments(gender, firstSetType) }));
+  }
+  function updateSetType(setType) {
+    setDraft((d) => ({ ...d, setType, garments: buildGarments(d.gender, setType) }));
+  }
+  function updateFieldValue(garmentId, fieldId, value) {
+    setDraft((d) => ({
+      ...d,
+      garments: d.garments.map((g) =>
+        g.id === garmentId ? { ...g, fields: g.fields.map((f) => (f.id === fieldId ? { ...f, value } : f)) } : g
+      ),
+    }));
+  }
+  function renameField(garmentId, fieldId, name) {
+    setDraft((d) => ({
+      ...d,
+      garments: d.garments.map((g) =>
+        g.id === garmentId ? { ...g, fields: g.fields.map((f) => (f.id === fieldId ? { ...f, name } : f)) } : g
+      ),
+    }));
+  }
+  function addField(garmentId) {
+    setDraft((d) => ({
+      ...d,
+      garments: d.garments.map((g) =>
+        g.id === garmentId ? { ...g, fields: [...g.fields, { id: uid(), name: "New Field", value: "" }] } : g
+      ),
+    }));
+  }
+  function removeField(garmentId, fieldId) {
+    setDraft((d) => ({
+      ...d,
+      garments: d.garments.map((g) =>
+        g.id === garmentId ? { ...g, fields: g.fields.filter((f) => f.id !== fieldId) } : g
+      ),
+    }));
+  }
+
+  function saveOrder() {
+    if (!draft.name.trim() || !draft.mobile.trim()) return;
+    if (draft.id) {
+      setOrders((prev) => prev.map((o) => (o.id === draft.id ? { ...draft } : o)));
+    } else {
+      setOrders((prev) => [...prev, { ...draft, id: uid() }]);
+    }
+    setDraft(emptyDraft());
+  }
+  function editOrder(o) {
+    setDraft(JSON.parse(JSON.stringify(o)));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  function deleteOrder(id) {
+    setOrders((prev) => prev.filter((o) => o.id !== id));
+  }
+  function updateStatus(id, status) {
+    setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, status } : o)));
+  }
+
+  const filtered = orders.filter((o) => {
+    if (statusFilter !== "All" && o.status !== statusFilter) return false;
+    if (genderFilter !== "All" && o.gender !== genderFilter) return false;
+    const q = search.trim().toLowerCase();
+    if (q && !(o.name.toLowerCase().includes(q) || o.mobile.includes(q))) return false;
+    return true;
+  });
+
+  const metricOptions = [
+    { value: "orders_by_settype", label: "Orders by set type" },
+    { value: "orders_by_status", label: "Orders by status" },
+    { value: "orders_by_gender", label: "Orders by gender" },
+    { value: "orders_over_time", label: "Orders over time" },
+  ];
+  const chartData = useMemo(() => {
+    switch (metric) {
+      case "orders_by_settype": return countBy(orders, (o) => o.setType);
+      case "orders_by_status": return countBy(orders, (o) => o.status);
+      case "orders_by_gender": return countBy(orders, (o) => o.gender);
+      case "orders_over_time": return sortByDate(countBy(orders, (o) => o.date));
+      default: return [];
+    }
+  }, [metric, orders]);
+
+  return (
+    <div className="space-y-6">
+      <Card className="p-5">
+        <SectionTitle sub="Add a new client order and note down every measurement.">
+          {draft.id ? "Edit order" : "New order"}
+        </SectionTitle>
+
+        <div className="grid sm:grid-cols-3 gap-3 mb-4">
+          <Field label="Customer name">
+            <input className={textInputCls} value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder="e.g. Priya Kumar" />
+          </Field>
+          <Field label="Mobile number">
+            <input className={inputCls} value={draft.mobile} onChange={(e) => setDraft((d) => ({ ...d, mobile: e.target.value }))} placeholder="98765 43210" />
+          </Field>
+          <Field label="Status">
+            <select className={selectCls} value={draft.status} onChange={(e) => setDraft((d) => ({ ...d, status: e.target.value }))}>
+              {STATUS_OPTIONS.map((s) => <option key={s}>{s}</option>)}
+            </select>
+          </Field>
+        </div>
+
+        <div className="flex gap-2 mb-4">
+          {["Male", "Female"].map((g) => (
+            <button
+              key={g}
+              type="button"
+              onClick={() => updateGender(g)}
+              className={`px-4 py-2 rounded-md text-sm font-medium border ${draft.gender === g ? "bg-slate-800 text-white border-slate-800" : "bg-white text-stone-600 border-stone-300 hover:bg-stone-50"}`}
+            >
+              {g}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-3 mb-4">
+          <Field label="Set type">
+            <select className={selectCls} value={draft.setType} onChange={(e) => updateSetType(e.target.value)}>
+              {Object.keys(SET_TYPES[draft.gender]).map((st) => <option key={st}>{st}</option>)}
+            </select>
+          </Field>
+          <Field label="Profit for this order (₹)">
+            <input type="number" className={inputCls} value={draft.profit} onChange={(e) => setDraft((d) => ({ ...d, profit: e.target.value }))} placeholder="Enter manually" />
+          </Field>
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-3 mb-4">
+          {draft.garments.map((g) => (
+            <MeasurementBox
+              key={g.id}
+              garment={g}
+              onChange={(fieldId, value) => updateFieldValue(g.id, fieldId, value)}
+              onRenameField={(fieldId, name) => renameField(g.id, fieldId, name)}
+              onAddGarmentField={() => addField(g.id)}
+              onRemoveGarmentField={(fieldId) => removeField(g.id, fieldId)}
+            />
+          ))}
+        </div>
+
+        <Field label="Order date">
+          <input type="date" className={inputCls + " sm:w-56"} value={draft.date} onChange={(e) => setDraft((d) => ({ ...d, date: e.target.value }))} />
+        </Field>
+
+        <div className="flex gap-2 mt-4">
+          <button className={btnPrimary} onClick={saveOrder}>
+            <Check className="h-4 w-4" /> {draft.id ? "Save changes" : "Add order"}
+          </button>
+          {draft.id && (
+            <button className={btnGhost} onClick={() => setDraft(emptyDraft())}>Cancel edit</button>
+          )}
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <SectionTitle sub="How your orders break down.">Order charts</SectionTitle>
+        <ChartTypeAndMetricPicker metric={metric} setMetric={setMetric} chartType={chartType} setChartType={setChartType} metricOptions={metricOptions} />
+        <div className="mt-4"><ChartRenderer data={chartData} type={chartType} /></div>
+      </Card>
+
+      <Card className="p-5">
+        <SectionTitle>All orders ({filtered.length})</SectionTitle>
+        <div className="flex flex-wrap gap-2 mb-4">
+          <div className="relative flex-1 min-w-[180px]">
+            <Search className="h-4 w-4 text-stone-400 absolute left-2.5 top-2.5" />
+            <input className={textInputCls + " pl-8"} placeholder="Search name or mobile" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <select className={selectCls + " w-auto"} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option>All</option>
+            {STATUS_OPTIONS.map((s) => <option key={s}>{s}</option>)}
+          </select>
+          <select className={selectCls + " w-auto"} value={genderFilter} onChange={(e) => setGenderFilter(e.target.value)}>
+            <option>All</option>
+            <option>Male</option>
+            <option>Female</option>
+          </select>
+        </div>
+
+        {filtered.length === 0 ? (
+          <EmptyState text="No orders match yet. Add one above." />
+        ) : (
+          <div className="divide-y divide-stone-100">
+            {filtered.map((o) => (
+              <div key={o.id} className="py-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button onClick={() => setExpandedId(expandedId === o.id ? null : o.id)} className="text-stone-400">
+                    {expandedId === o.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  </button>
+                  <div className="min-w-[140px]">
+                    <div className="font-medium text-slate-800 text-sm">{o.name}</div>
+                    <div className="text-xs text-stone-500 font-mono">{o.mobile}</div>
+                  </div>
+                  <span className="text-xs px-2 py-1 rounded bg-stone-100 text-stone-600">{o.gender} · {o.setType}</span>
+                  <select value={o.status} onChange={(e) => updateStatus(o.id, e.target.value)} className={`text-xs rounded px-2 py-1 border-0 font-medium ${STATUS_COLOR[o.status]}`}>
+                    {STATUS_OPTIONS.map((s) => <option key={s}>{s}</option>)}
+                  </select>
+                  <span className="text-xs text-stone-500 font-mono ml-auto">{o.date}</span>
+                  <span className="text-sm font-mono font-semibold text-emerald-700">{money(o.profit)}</span>
+                  <button onClick={() => editOrder(o)} className="text-stone-400 hover:text-slate-700"><Pencil className="h-4 w-4" /></button>
+                  <button onClick={() => deleteOrder(o.id)} className={btnDanger}><Trash2 className="h-4 w-4" /></button>
+                </div>
+                {expandedId === o.id && (
+                  <div className="mt-3 ml-7 grid sm:grid-cols-2 gap-2">
+                    {o.garments.map((g) => (
+                      <div key={g.id} className="text-xs bg-stone-50 rounded p-2 border border-stone-100">
+                        <div className="font-semibold text-slate-700 mb-1">{g.type}</div>
+                        {g.fields.map((f) => (
+                          <div key={f.id} className="flex justify-between font-mono text-stone-600">
+                            <span>{f.name}</span><span>{f.value || "—"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------------------------- Income Tab ---------------------------------- */
+
+function IncomeTab({ orders }) {
+  const [metric, setMetric] = useState("profit_by_settype");
+  const [chartType, setChartType] = useState("bar");
+
+  const metricOptions = [
+    { value: "profit_by_settype", label: "Profit by set type" },
+    { value: "profit_by_gender", label: "Profit by gender" },
+    { value: "profit_over_time", label: "Profit over time (daily)" },
+    { value: "profit_over_time_monthly", label: "Profit over time (monthly)" },
+    { value: "avg_profit_settype", label: "Average profit per order type" },
+  ];
+
+  const chartData = useMemo(() => {
+    switch (metric) {
+      case "profit_by_settype": return sumBy(orders, (o) => o.setType, (o) => o.profit);
+      case "profit_by_gender": return sumBy(orders, (o) => o.gender, (o) => o.profit);
+      case "profit_over_time": return sortByDate(sumBy(orders, (o) => o.date, (o) => o.profit));
+      case "profit_over_time_monthly": return sortByDate(sumBy(orders, (o) => (o.date || "").slice(0, 7), (o) => o.profit));
+      case "avg_profit_settype": {
+        const sums = {}; const counts = {};
+        orders.forEach((o) => {
+          const k = o.setType || "Unknown";
+          sums[k] = (sums[k] || 0) + (parseFloat(o.profit) || 0);
+          counts[k] = (counts[k] || 0) + 1;
+        });
+        return Object.keys(sums).map((k) => ({ name: k, value: Math.round((sums[k] / counts[k]) * 100) / 100 }));
+      }
+      default: return [];
+    }
+  }, [metric, orders]);
+
+  const totalProfit = orders.reduce((s, o) => s + (parseFloat(o.profit) || 0), 0);
+  const totalOrders = orders.length;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid sm:grid-cols-3 gap-3">
+        <StatCard label="Total profit" value={money(totalProfit)} icon={TrendingUp} tone="emerald" />
+        <StatCard label="Total orders" value={totalOrders} icon={Shirt} tone="slate" />
+        <StatCard label="Avg profit / order" value={money(totalOrders ? totalProfit / totalOrders : 0)} icon={Wallet} tone="amber" />
+      </div>
+      <Card className="p-5">
+        <SectionTitle sub="Pick a view to understand where your income comes from.">Income & profit charts</SectionTitle>
+        <ChartTypeAndMetricPicker metric={metric} setMetric={setMetric} chartType={chartType} setChartType={setChartType} metricOptions={metricOptions} />
+        <div className="mt-4"><ChartRenderer data={chartData} type={chartType} /></div>
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------------------------- Expenses Tab ---------------------------------- */
+
+function emptyExpenseDraft() {
+  return { id: null, type: "Product", name: "", worker: "", qty: "1", unitPrice: "", amount: "", date: todayStr(), note: "" };
+}
+
+function ExpensesTab({ expenses, setExpenses, workers }) {
+  const [draft, setDraft] = useState(emptyExpenseDraft());
+  const [metric, setMetric] = useState("by_type");
+  const [chartType, setChartType] = useState("pie");
+
+  const computedTotal = draft.type === "Product" ? (parseFloat(draft.qty) || 0) * (parseFloat(draft.unitPrice) || 0) : parseFloat(draft.amount) || 0;
+
+  function addExpense() {
+    const amount = computedTotal;
+    if (!amount) return;
+    const entry = {
+      id: uid(),
+      type: draft.type,
+      name: draft.type === "Product" ? draft.name : (draft.worker || draft.name || draft.type),
+      worker: draft.type === "Product" ? "" : draft.worker,
+      qty: draft.type === "Product" ? draft.qty : "",
+      unitPrice: draft.type === "Product" ? draft.unitPrice : "",
+      amount,
+      date: draft.date,
+      note: draft.note,
+    };
+    setExpenses((prev) => [...prev, entry]);
+    setDraft(emptyExpenseDraft());
+  }
+  function removeExpense(id) {
+    setExpenses((prev) => prev.filter((e) => e.id !== id));
+  }
+
+  const total = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+
+  const metricOptions = [
+    { value: "by_type", label: "Expenses by type" },
+    { value: "by_worker", label: "Salary & advance by worker" },
+    { value: "over_time", label: "Expenses over time" },
+  ];
+  const chartData = useMemo(() => {
+    if (metric === "by_type") return sumBy(expenses, (e) => e.type, (e) => e.amount);
+    if (metric === "by_worker") return sumBy(expenses.filter((e) => e.type === "Salary" || e.type === "Advance"), (e) => e.worker || e.name, (e) => e.amount);
+    if (metric === "over_time") return sortByDate(sumBy(expenses, (e) => e.date, (e) => e.amount));
+    return [];
+  }, [metric, expenses]);
+
+  return (
+    <div className="space-y-6">
+      <Card className="p-5">
+        <SectionTitle sub="Salary, advances, and material costs — all in one place.">Add expense</SectionTitle>
+        <div className="grid sm:grid-cols-4 gap-3 mb-3">
+          <Field label="Type">
+            <select className={selectCls} value={draft.type} onChange={(e) => setDraft((d) => ({ ...d, type: e.target.value }))}>
+              <option>Product</option>
+              <option>Salary</option>
+              <option>Advance</option>
+              <option>Other</option>
+            </select>
+          </Field>
+          {draft.type === "Product" ? (
+            <>
+              <Field label="Product / item name">
+                <input className={textInputCls} value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder="e.g. Buttons" />
+              </Field>
+              <Field label="Quantity">
+                <input type="number" className={inputCls} value={draft.qty} onChange={(e) => setDraft((d) => ({ ...d, qty: e.target.value }))} />
+              </Field>
+              <Field label="Unit price (₹)">
+                <input type="number" className={inputCls} value={draft.unitPrice} onChange={(e) => setDraft((d) => ({ ...d, unitPrice: e.target.value }))} />
+              </Field>
+            </>
+          ) : draft.type === "Salary" || draft.type === "Advance" ? (
+            <>
+              <Field label="Worker">
+                <select className={selectCls} value={draft.worker} onChange={(e) => setDraft((d) => ({ ...d, worker: e.target.value }))}>
+                  <option value="">Select worker</option>
+                  {workers.map((w) => <option key={w}>{w}</option>)}
+                </select>
+              </Field>
+              <Field label="Amount (₹)">
+                <input type="number" className={inputCls} value={draft.amount} onChange={(e) => setDraft((d) => ({ ...d, amount: e.target.value }))} />
+              </Field>
+              <Field label="Note">
+                <input className={textInputCls} value={draft.note} onChange={(e) => setDraft((d) => ({ ...d, note: e.target.value }))} placeholder="optional" />
+              </Field>
+            </>
+          ) : (
+            <>
+              <Field label="Description">
+                <input className={textInputCls} value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} />
+              </Field>
+              <Field label="Amount (₹)">
+                <input type="number" className={inputCls} value={draft.amount} onChange={(e) => setDraft((d) => ({ ...d, amount: e.target.value }))} />
+              </Field>
+              <div />
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-4 flex-wrap">
+          <Field label="Date"><input type="date" className={inputCls} value={draft.date} onChange={(e) => setDraft((d) => ({ ...d, date: e.target.value }))} /></Field>
+          <div className="text-sm text-stone-600">Total: <span className="font-mono font-semibold text-slate-800">{money(computedTotal)}</span></div>
+          <button className={btnPrimary + " ml-auto"} onClick={addExpense}><Plus className="h-4 w-4" /> Add expense</button>
+        </div>
+      </Card>
+
+      <div className="grid sm:grid-cols-1 gap-3">
+        <StatCard label="Total expenses" value={money(total)} icon={Wallet} tone="rose" />
+      </div>
+
+      <Card className="p-5">
+        <SectionTitle>Expense charts</SectionTitle>
+        <ChartTypeAndMetricPicker metric={metric} setMetric={setMetric} chartType={chartType} setChartType={setChartType} metricOptions={metricOptions} />
+        <div className="mt-4"><ChartRenderer data={chartData} type={chartType} /></div>
+      </Card>
+
+      <Card className="p-5">
+        <SectionTitle>All expenses ({expenses.length})</SectionTitle>
+        {expenses.length === 0 ? <EmptyState text="No expenses logged yet." /> : (
+          <div className="divide-y divide-stone-100 text-sm">
+            {[...expenses].reverse().map((e) => (
+              <div key={e.id} className="py-2.5 flex items-center gap-3 flex-wrap">
+                <span className="text-xs px-2 py-1 rounded bg-stone-100 text-stone-600 w-20 text-center">{e.type}</span>
+                <span className="text-slate-700 min-w-[100px]">{e.name || e.worker}</span>
+                {e.qty && <span className="text-xs text-stone-400 font-mono">{e.qty} × {money(e.unitPrice)}</span>}
+                {e.note && <span className="text-xs text-stone-400 italic">{e.note}</span>}
+                <span className="text-xs text-stone-500 font-mono ml-auto">{e.date}</span>
+                <span className="font-mono font-semibold text-rose-600">{money(e.amount)}</span>
+                <button onClick={() => removeExpense(e.id)} className={btnDanger}><Trash2 className="h-4 w-4" /></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------------------------- Workers Tab (activity) ---------------------------------- */
+
+function WorkersTab({ workers, setWorkers, activities, setActivities, clothTypes, setClothTypes }) {
+  const [newWorker, setNewWorker] = useState("");
+  const [newClothType, setNewClothType] = useState("");
+  const [actDraft, setActDraft] = useState({ worker: "", clothType: "", qty: "1", date: todayStr() });
+  const [metric, setMetric] = useState("by_worker");
+  const [chartType, setChartType] = useState("bar");
+
+  function addWorker() {
+    const name = newWorker.trim();
+    if (!name || workers.includes(name)) return;
+    setWorkers((prev) => [...prev, name]);
+    setNewWorker("");
+  }
+  function removeWorker(name) {
+    setWorkers((prev) => prev.filter((w) => w !== name));
+  }
+  function addClothType() {
+    const t = newClothType.trim();
+    if (!t || clothTypes.includes(t)) return;
+    setClothTypes((prev) => [...prev, t]);
+    setNewClothType("");
+  }
+  function addActivity() {
+    if (!actDraft.worker || !actDraft.clothType || !actDraft.qty) return;
+    setActivities((prev) => [...prev, { id: uid(), ...actDraft }]);
+    setActDraft({ worker: actDraft.worker, clothType: actDraft.clothType, qty: "1", date: todayStr() });
+  }
+  function removeActivity(id) {
+    setActivities((prev) => prev.filter((a) => a.id !== id));
+  }
+
+  const totalStitched = activities.reduce((s, a) => s + (parseFloat(a.qty) || 0), 0);
+
+  const metricOptions = [
+    { value: "by_worker", label: "Pieces stitched by worker" },
+    { value: "by_clothtype", label: "Pieces stitched by cloth type" },
+    { value: "over_time", label: "Pieces stitched over time" },
+  ];
+  const chartData = useMemo(() => {
+    if (metric === "by_worker") return sumBy(activities, (a) => a.worker, (a) => a.qty);
+    if (metric === "by_clothtype") return sumBy(activities, (a) => a.clothType, (a) => a.qty);
+    if (metric === "over_time") return sortByDate(sumBy(activities, (a) => a.date, (a) => a.qty));
+    return [];
+  }, [metric, activities]);
+
+  return (
+    <div className="space-y-6">
+      <div className="grid sm:grid-cols-2 gap-6">
+        <Card className="p-5">
+          <SectionTitle sub="Keep a running list of your tailors.">Workers</SectionTitle>
+          <div className="flex gap-2 mb-3">
+            <input className={textInputCls} placeholder="Worker name" value={newWorker} onChange={(e) => setNewWorker(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addWorker()} />
+            <button className={btnPrimary} onClick={addWorker}><Plus className="h-4 w-4" /></button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {workers.map((w) => (
+              <span key={w} className="inline-flex items-center gap-1.5 bg-stone-100 text-stone-700 text-sm px-2.5 py-1 rounded-full">
+                {w} <button onClick={() => removeWorker(w)} className="text-stone-400 hover:text-rose-500"><X className="h-3.5 w-3.5" /></button>
+              </span>
+            ))}
+            {workers.length === 0 && <p className="text-sm text-stone-400">No workers added yet.</p>}
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <SectionTitle sub="Types of garments your team stitches.">Cloth types</SectionTitle>
+          <div className="flex gap-2 mb-3">
+            <input className={textInputCls} placeholder="e.g. Blouse" value={newClothType} onChange={(e) => setNewClothType(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addClothType()} />
+            <button className={btnPrimary} onClick={addClothType}><Plus className="h-4 w-4" /></button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {clothTypes.map((c) => <span key={c} className="bg-stone-100 text-stone-700 text-sm px-2.5 py-1 rounded-full">{c}</span>)}
+          </div>
+        </Card>
+      </div>
+
+      <Card className="p-5">
+        <SectionTitle sub="Log how many pieces each worker completed.">Record activity</SectionTitle>
+        <div className="grid sm:grid-cols-4 gap-3 items-end">
+          <Field label="Worker">
+            <select className={selectCls} value={actDraft.worker} onChange={(e) => setActDraft((d) => ({ ...d, worker: e.target.value }))}>
+              <option value="">Select</option>
+              {workers.map((w) => <option key={w}>{w}</option>)}
+            </select>
+          </Field>
+          <Field label="Cloth type">
+            <select className={selectCls} value={actDraft.clothType} onChange={(e) => setActDraft((d) => ({ ...d, clothType: e.target.value }))}>
+              <option value="">Select</option>
+              {clothTypes.map((c) => <option key={c}>{c}</option>)}
+            </select>
+          </Field>
+          <Field label="Quantity">
+            <input type="number" className={inputCls} value={actDraft.qty} onChange={(e) => setActDraft((d) => ({ ...d, qty: e.target.value }))} />
+          </Field>
+          <Field label="Date">
+            <input type="date" className={inputCls} value={actDraft.date} onChange={(e) => setActDraft((d) => ({ ...d, date: e.target.value }))} />
+          </Field>
+        </div>
+        <button className={btnPrimary + " mt-3"} onClick={addActivity}><Plus className="h-4 w-4" /> Log activity</button>
+      </Card>
+
+      <div className="grid sm:grid-cols-1 gap-3">
+        <StatCard label="Total pieces stitched" value={totalStitched} icon={Users} tone="slate" />
+      </div>
+
+      <Card className="p-5">
+        <SectionTitle>Activity charts</SectionTitle>
+        <ChartTypeAndMetricPicker metric={metric} setMetric={setMetric} chartType={chartType} setChartType={setChartType} metricOptions={metricOptions} />
+        <div className="mt-4"><ChartRenderer data={chartData} type={chartType} /></div>
+      </Card>
+
+      <Card className="p-5">
+        <SectionTitle>Activity log ({activities.length})</SectionTitle>
+        {activities.length === 0 ? <EmptyState text="No activity logged yet." /> : (
+          <div className="divide-y divide-stone-100 text-sm">
+            {[...activities].reverse().map((a) => (
+              <div key={a.id} className="py-2.5 flex items-center gap-3 flex-wrap">
+                <span className="font-medium text-slate-700 min-w-[100px]">{a.worker}</span>
+                <span className="text-stone-500">{a.clothType}</span>
+                <span className="font-mono text-amber-700">×{a.qty}</span>
+                <span className="text-xs text-stone-400 font-mono ml-auto">{a.date}</span>
+                <button onClick={() => removeActivity(a.id)} className={btnDanger}><Trash2 className="h-4 w-4" /></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------------------------- Salary Tab ---------------------------------- */
+
+function SalaryTab({ workers, clothTypes, payRates, setPayRates, expenses, setExpenses }) {
+  const [calc, setCalc] = useState({ worker: "", clothType: "", qty: "1" });
+
+  function updateRate(clothType, rate) {
+    setPayRates((prev) => ({ ...prev, [clothType]: rate }));
+  }
+
+  const rate = parseFloat(payRates[calc.clothType]) || 0;
+  const qty = parseFloat(calc.qty) || 0;
+  const total = rate * qty;
+
+  function recordPayment() {
+    if (!calc.worker || !calc.clothType || !qty) return;
+    setExpenses((prev) => [
+      ...prev,
+      {
+        id: uid(),
+        type: "Salary",
+        name: calc.worker,
+        worker: calc.worker,
+        qty: calc.qty,
+        unitPrice: rate,
+        amount: total,
+        date: todayStr(),
+        note: `${qty} × ${calc.clothType} @ ${money(rate)}`,
+      },
+    ]);
+    setCalc((c) => ({ ...c, qty: "1" }));
+  }
+
+  const salaryPayments = expenses.filter((e) => e.type === "Salary");
+  const advances = expenses.filter((e) => e.type === "Advance");
+
+  const perWorker = workers.map((w) => ({
+    worker: w,
+    salary: salaryPayments.filter((s) => s.worker === w).reduce((s, e) => s + (parseFloat(e.amount) || 0), 0),
+    advance: advances.filter((s) => s.worker === w).reduce((s, e) => s + (parseFloat(e.amount) || 0), 0),
+  }));
+
+  return (
+    <div className="space-y-6">
+      <Card className="p-5">
+        <SectionTitle sub="Set what you pay per piece for each cloth type.">Pay rates</SectionTitle>
+        <div className="grid sm:grid-cols-3 gap-3">
+          {clothTypes.map((c) => (
+            <Field key={c} label={c}>
+              <div className="flex items-center gap-1">
+                <span className="text-stone-400 text-sm">₹</span>
+                <input type="number" className={inputCls} value={payRates[c] || ""} onChange={(e) => updateRate(c, e.target.value)} placeholder="rate per piece" />
+              </div>
+            </Field>
+          ))}
+          {clothTypes.length === 0 && <p className="text-sm text-stone-400">Add cloth types in the Workers tab first.</p>}
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <SectionTitle sub="Pick a worker and cloth type, enter quantity, and the amount is calculated for you.">Salary calculator</SectionTitle>
+        <div className="grid sm:grid-cols-4 gap-3 items-end">
+          <Field label="Worker">
+            <select className={selectCls} value={calc.worker} onChange={(e) => setCalc((c) => ({ ...c, worker: e.target.value }))}>
+              <option value="">Select</option>
+              {workers.map((w) => <option key={w}>{w}</option>)}
+            </select>
+          </Field>
+          <Field label="Cloth type">
+            <select className={selectCls} value={calc.clothType} onChange={(e) => setCalc((c) => ({ ...c, clothType: e.target.value }))}>
+              <option value="">Select</option>
+              {clothTypes.map((c) => <option key={c}>{c}</option>)}
+            </select>
+          </Field>
+          <Field label="Quantity">
+            <input type="number" className={inputCls} value={calc.qty} onChange={(e) => setCalc((c) => ({ ...c, qty: e.target.value }))} />
+          </Field>
+          <div className="text-sm text-stone-600">Total: <span className="font-mono font-semibold text-slate-800 text-base">{money(total)}</span></div>
+        </div>
+        <button className={btnPrimary + " mt-3"} onClick={recordPayment}><Banknote className="h-4 w-4" /> Record payment</button>
+      </Card>
+
+      <Card className="p-5">
+        <SectionTitle>Salary paid per worker</SectionTitle>
+        {perWorker.length === 0 ? <EmptyState text="Add workers to see totals here." /> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-stone-500 uppercase tracking-wide border-b border-stone-200">
+                  <th className="py-2 pr-4">Worker</th>
+                  <th className="py-2 pr-4">Salary paid</th>
+                  <th className="py-2 pr-4">Advance given</th>
+                  <th className="py-2 pr-4">Net paid</th>
+                </tr>
+              </thead>
+              <tbody>
+                {perWorker.map((p) => (
+                  <tr key={p.worker} className="border-b border-stone-100">
+                    <td className="py-2 pr-4 font-medium text-slate-700">{p.worker}</td>
+                    <td className="py-2 pr-4 font-mono text-emerald-700">{money(p.salary)}</td>
+                    <td className="py-2 pr-4 font-mono text-amber-700">{money(p.advance)}</td>
+                    <td className="py-2 pr-4 font-mono font-semibold text-slate-800">{money(p.salary + p.advance)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-5">
+        <SectionTitle>Payment history ({salaryPayments.length})</SectionTitle>
+        {salaryPayments.length === 0 ? <EmptyState text="No salary payments recorded yet." /> : (
+          <div className="divide-y divide-stone-100 text-sm">
+            {[...salaryPayments].reverse().map((p) => (
+              <div key={p.id} className="py-2.5 flex items-center gap-3 flex-wrap">
+                <span className="font-medium text-slate-700 min-w-[100px]">{p.worker}</span>
+                <span className="text-xs text-stone-400 italic">{p.note}</span>
+                <span className="text-xs text-stone-400 font-mono ml-auto">{p.date}</span>
+                <span className="font-mono font-semibold text-emerald-700">{money(p.amount)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------------------------- Dashboard Tab ---------------------------------- */
+
+function DashboardTab({ orders, expenses }) {
+  const [metric, setMetric] = useState("profit_by_settype");
+  const [chartType, setChartType] = useState("bar");
+
+  const totalProfit = orders.reduce((s, o) => s + (parseFloat(o.profit) || 0), 0);
+  const totalExpenses = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+  const pendingOrders = orders.filter((o) => o.status !== "Delivered" && o.status !== "Cancelled").length;
+
+  const metricOptions = [
+    { value: "profit_by_settype", label: "Profit by set type" },
+    { value: "orders_by_status", label: "Orders by status" },
+    { value: "orders_over_time", label: "Orders over time" },
+    { value: "profit_over_time", label: "Profit over time" },
+    { value: "expenses_by_type", label: "Expenses by type" },
+  ];
+  const chartData = useMemo(() => {
+    switch (metric) {
+      case "profit_by_settype": return sumBy(orders, (o) => o.setType, (o) => o.profit);
+      case "orders_by_status": return countBy(orders, (o) => o.status);
+      case "orders_over_time": return sortByDate(countBy(orders, (o) => o.date));
+      case "profit_over_time": return sortByDate(sumBy(orders, (o) => o.date, (o) => o.profit));
+      case "expenses_by_type": return sumBy(expenses, (e) => e.type, (e) => e.amount);
+      default: return [];
+    }
+  }, [metric, orders, expenses]);
+
+  return (
+    <div className="space-y-6">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard label="Total orders" value={orders.length} icon={Shirt} tone="slate" />
+        <StatCard label="Pending orders" value={pendingOrders} icon={LayoutDashboard} tone="amber" />
+        <StatCard label="Total profit" value={money(totalProfit)} icon={TrendingUp} tone="emerald" />
+        <StatCard label="Net profit" value={money(totalProfit - totalExpenses)} icon={Wallet} tone={totalProfit - totalExpenses >= 0 ? "emerald" : "rose"} />
+      </div>
+
+      <Card className="p-5">
+        <SectionTitle sub="A quick overview — switch the view however you like.">Overview charts</SectionTitle>
+        <ChartTypeAndMetricPicker metric={metric} setMetric={setMetric} chartType={chartType} setChartType={setChartType} metricOptions={metricOptions} />
+        <div className="mt-4"><ChartRenderer data={chartData} type={chartType} /></div>
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------------------------- Login Screen ---------------------------------- */
+function LoginScreen({ onLogin }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [isAttempting, setIsAttempting] = useState(false);
+  const [error, setError] = useState("");
+  
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    if (!username || !password) {
+      setError("Please fill in both fields.");
+      return;
+    }
+
+    setIsAttempting(true);
+    setError("");
+
+    // Test the credentials against the Google Sheet
+    try {
+      const res = await fetch(`${API_URL}?key=clothTypes&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`);
+      const data = await res.json();
+      
+      if (data.error === "Access Denied") {
+        setError("Incorrect username or password.");
+        setIsAttempting(false);
+      } else {
+        // Success! Save to temporary session and enter app
+        sessionStorage.setItem("vvsk_user", username);
+        sessionStorage.setItem("vvsk_pass", password);
+        onLogin();
+      }
+    } catch (err) {
+      setError("Network error. Please try again.");
+      setIsAttempting(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-stone-100 flex flex-col justify-center items-center p-4">
+      <Card className="w-full max-w-md p-8">
+        <div className="flex flex-col items-center mb-8">
+          <div className="h-12 w-12 rounded-md bg-amber-600 flex items-center justify-center mb-4">
+            <Shirt className="h-7 w-7 text-white" />
+          </div>
+          <h1 className="font-display text-2xl text-slate-800">VVSK Fashions</h1>
+          <p className="text-stone-500 text-sm mt-1">Please log in to view the ledger</p>
+        </div>
+        <form onSubmit={handleLogin} className="space-y-4">
+          <Field label="Username">
+            <input 
+              type="text" 
+              className={textInputCls} 
+              value={username} 
+              onChange={(e) => setUsername(e.target.value)} 
+              placeholder="e.g. admin123"
+            />
+          </Field>
+          <Field label="Password">
+            <input 
+              type="password" 
+              className={textInputCls} 
+              value={password} 
+              onChange={(e) => setPassword(e.target.value)} 
+              placeholder="••••••••"
+            />
+          </Field>
+
+          {error && <p className="text-rose-500 text-sm font-medium">{error}</p>}
+
+          <button type="submit" disabled={isAttempting} className={`${btnPrimary} w-full justify-center mt-2 py-2.5 disabled:opacity-50`}>
+            {isAttempting ? "Verifying..." : "Access Dashboard"}
+          </button>
+        </form>
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------------------------- App ---------------------------------- */
+
+const TABS = [
+  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { key: "orders", label: "Orders", icon: Shirt },
+  { key: "income", label: "Income", icon: TrendingUp },
+  { key: "expenses", label: "Expenses", icon: Wallet },
+  { key: "workers", label: "Workers", icon: Users },
+  { key: "salary", label: "Salary", icon: Banknote },
+];
+
+function App() {
+  const [tab, setTab] = useState("dashboard");
+  const [loaded, setLoaded] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [orders, setOrders] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [workers, setWorkers] = useState([]);
+  const [activities, setActivities] = useState([]);
+  const [payRates, setPayRates] = useState({});
+  const [clothTypes, setClothTypes] = useState(["Pant", "Shirt", "Trouser", "Top", "Bottom", "Coat", "Binoform"]);
+
+  useEffect(() => {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap";
+    document.head.appendChild(link);
+
+    (async () => {
+      setOrders(await loadKey(KEYS.orders, []));
+      setExpenses(await loadKey(KEYS.expenses, []));
+      setWorkers(await loadKey(KEYS.workers, []));
+      setActivities(await loadKey(KEYS.activities, []));
+      setPayRates(await loadKey(KEYS.payRates, {}));
+      setClothTypes(await loadKey(KEYS.clothTypes, ["Pant", "Shirt", "Trouser", "Top", "Bottom", "Coat", "Binoform"]));
+      setLoaded(true);
+    })();
+  }, []);
+
+  useEffect(() => { if (loaded) saveKey(KEYS.orders, orders); }, [orders, loaded]);
+  useEffect(() => { if (loaded) saveKey(KEYS.expenses, expenses); }, [expenses, loaded]);
+  useEffect(() => { if (loaded) saveKey(KEYS.workers, workers); }, [workers, loaded]);
+  useEffect(() => { if (loaded) saveKey(KEYS.activities, activities); }, [activities, loaded]);
+  useEffect(() => { if (loaded) saveKey(KEYS.payRates, payRates); }, [payRates, loaded]);
+  useEffect(() => { if (loaded) saveKey(KEYS.clothTypes, clothTypes); }, [clothTypes, loaded]);
+
+  if (!isLoggedIn) {
+    return (
+      <div style={{ fontFamily: "'Work Sans', sans-serif" }}>
+        <style>{`
+          .font-display { font-family: 'Fraunces', serif; }
+          .font-mono { font-family: 'IBM Plex Mono', monospace; }
+        `}</style>
+        <LoginScreen onLogin={() => setIsLoggedIn(true)} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-stone-100" style={{ fontFamily: "'Work Sans', sans-serif" }}>
+      <style>{`
+        .font-display { font-family: 'Fraunces', serif; }
+        .font-mono { font-family: 'IBM Plex Mono', monospace; }
+        .tape-rule {
+          height: 6px;
+          background-image: repeating-linear-gradient(90deg, #C9A15A 0, #C9A15A 1px, transparent 1px, transparent 8px);
+          opacity: 0.55;
+        }
+      `}</style>
+
+      <header className="bg-slate-800 text-white sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto px-4 py-4">
+          <div className="flex items-center gap-2">
+            <div className="h-9 w-9 rounded-md bg-amber-600 flex items-center justify-center">
+              <Shirt className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <h1 className="font-display text-lg leading-tight tracking-tight">Tailor's Ledger</h1>
+              <p className="text-xs text-slate-300 -mt-0.5">Orders · Measurements · Money</p>
+            </div>
+          </div>
+        </div>
+        <nav className="max-w-6xl mx-auto px-4 flex gap-1 overflow-x-auto pb-2">
+          {TABS.map((t) => {
+            const Icon = t.icon;
+            const active = tab === t.key;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors ${
+                  active ? "bg-amber-600 text-white" : "text-slate-300 hover:bg-slate-700"
+                }`}
+              >
+                <Icon className="h-4 w-4" /> {t.label}
+              </button>
+            );
+          })}
+        </nav>
+      </header>
+
+      <main className="max-w-6xl mx-auto px-4 py-6">
+        {!loaded ? (
+          <div className="text-center text-stone-400 py-20">Loading your ledger…</div>
+        ) : (
+          <>
+            {tab === "dashboard" && <DashboardTab orders={orders} expenses={expenses} />}
+            {tab === "orders" && <OrdersTab orders={orders} setOrders={setOrders} />}
+            {tab === "income" && <IncomeTab orders={orders} />}
+            {tab === "expenses" && <ExpensesTab expenses={expenses} setExpenses={setExpenses} workers={workers} />}
+            {tab === "workers" && (
+              <WorkersTab
+                workers={workers} setWorkers={setWorkers}
+                activities={activities} setActivities={setActivities}
+                clothTypes={clothTypes} setClothTypes={setClothTypes}
+              />
+            )}
+            {tab === "salary" && (
+              <SalaryTab
+                workers={workers} clothTypes={clothTypes}
+                payRates={payRates} setPayRates={setPayRates}
+                expenses={expenses} setExpenses={setExpenses}
+              />
+            )}
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
