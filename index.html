@@ -1204,6 +1204,7 @@ function App() {
   const [clothTypes, setClothTypes] = useState(["Pant", "Shirt", "Trouser", "Top", "Bottom", "Coat", "Binoform"]);
 
   useEffect(() => {
+  if (isLoggedIn) { // Only trigger the fetch when the user is logged in
     (async () => {
       setOrders(await loadKey(KEYS.orders, []));
       setExpenses(await loadKey(KEYS.expenses, []));
@@ -1220,7 +1221,8 @@ function App() {
         console.log("App ready: Auto-save enabled.");
       }, 2000);
     })();
-  }, []);
+  }
+}, [isLoggedIn]); // <--- This ensures it waits for login
 
   // Protected auto-save hooks
   // These will ONLY fire if isReady.current is true
