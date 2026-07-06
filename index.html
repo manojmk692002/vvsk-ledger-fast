@@ -107,14 +107,20 @@ const getCredentials = () => ({
 async function loadKey(key, fallback) {
   const { username, password } = getCredentials();
   try {
-    // We add &t={timestamp} so the browser thinks this is a brand new request every time
-    const url = `${API_URL}?key=${key}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&t=${new Date().getTime()}`;
+    // Adding a timestamp so the browser NEVER uses old cache
+    const url = `${API_URL}?key=${key}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&t=${Date.now()}`;
     const res = await fetch(url);
     const data = await res.json();
     
+    // If the backend had an error reading the sheet, don't pretend it's empty
+    if (data && data.status === "error") {
+      console.error("Backend error reading sheet: " + key);
+      return fallback;
+    }
+    
     return data && !data.error && (Array.isArray(data) ? data.length !== 0 : Object.keys(data).length !== 0) ? data : fallback;
   } catch (e) {
-    console.error("Failed to load " + key, e);
+    console.error("Network error loading: " + key, e);
     return fallback;
   }
 }
@@ -144,7 +150,12 @@ async function resetData(key) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "clear", key: key, username, password })
     });
-    window.location.reload(); 
+    
+    // ⏳ CRITICAL FIX: Wait 2 seconds for Google to process the deletion before refreshing the page
+    setTimeout(() => {
+      window.location.reload(); 
+    }, 2000);
+    
   } catch (e) {
     console.error("Reset failed", e);
   }
