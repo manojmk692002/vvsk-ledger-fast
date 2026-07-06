@@ -4,13 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tailor Dashboard</title>
+    
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body>
     <div id="root"></div>
     <script type="text/babel" data-type="module">
-        import React, { useState, useEffect, useMemo } from 'https://esm.sh/react@18';
+        import React, { useState, useEffect, useMemo, useRef } from 'https://esm.sh/react@18';
         import { createRoot } from 'https://esm.sh/react-dom@18/client';
         import {
           BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -105,25 +107,59 @@ const getCredentials = () => ({
 async function loadKey(key, fallback) {
   const { username, password } = getCredentials();
   try {
-    const res = await fetch(`${API_URL}?key=${key}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`);
+    // Adding a timestamp so the browser NEVER uses old cache
+    const url = `${API_URL}?key=${key}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&t=${Date.now()}`;
+    const res = await fetch(url);
     const data = await res.json();
+    
+    // If the backend had an error reading the sheet, don't pretend it's empty
+    if (data && data.status === "error") {
+      console.error("Backend error reading sheet: " + key);
+      return fallback;
+    }
+    
     return data && !data.error && (Array.isArray(data) ? data.length !== 0 : Object.keys(data).length !== 0) ? data : fallback;
   } catch (e) {
+    console.error("Network error loading: " + key, e);
     return fallback;
   }
 }
 
 async function saveKey(key, value) {
   const { username, password } = getCredentials();
+  console.log(`Attempting to save ${key}...`); // DEBUG
   try {
-    await fetch(API_URL, {
+    const response = await fetch(API_URL, {
       method: "POST",
       mode: "no-cors",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "save", key: key, value: value, username, password })
     });
+    console.log(`Save request sent for ${key}.`); // DEBUG
   } catch (e) {
     console.error("Save failed", e);
+  }
+}
+
+async function resetData(key) {
+  if (!confirm("Are you sure? This will permanently delete all data in " + key + ".")) return;
+  
+  const { username, password } = getCredentials();
+  try {
+    await fetch(API_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "clear", key: key, username, password })
+    });
+    
+    // ⏳ CRITICAL FIX: Wait 2 seconds for Google to process the deletion before refreshing the page
+    setTimeout(() => {
+      window.location.reload(); 
+    }, 2000);
+    
+  } catch (e) {
+    console.error("Reset failed", e);
   }
 }
 
@@ -365,15 +401,20 @@ function OrdersTab({ orders, setOrders }) {
     }));
   }
 
-  function saveOrder() {
-    if (!draft.name.trim() || !draft.mobile.trim()) return;
-    if (draft.id) {
-      setOrders((prev) => prev.map((o) => (o.id === draft.id ? { ...draft } : o)));
-    } else {
-      setOrders((prev) => [...prev, { ...draft, id: uid() }]);
-    }
-    setDraft(emptyDraft());
+function saveOrder() {
+  if (!draft.name.trim() || !draft.mobile.trim()) return;
+  
+  if (draft.id) {
+    // Force a complete new array reference for the update
+    setOrders((prev) => {
+      const updated = prev.map((o) => (o.id === draft.id ? { ...draft } : o));
+      return [...updated]; 
+    });
+  } else {
+    setOrders((prev) => [...prev, { ...draft, id: uid() }]);
   }
+  setDraft(emptyDraft());
+}
   function editOrder(o) {
     setDraft(JSON.parse(JSON.stringify(o)));
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -495,10 +536,6 @@ function OrdersTab({ orders, setOrders }) {
             <input className={textInputCls + " pl-8"} placeholder="Search name or mobile" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
           <select className={selectCls + " w-auto"} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option>All</option>
-            {STATUS_OPTIONS.map((s) => <option key={s}>{s}</option>)}
-          </select>
-          <select className={selectCls + " w-auto"} value={genderFilter} onChange={(e) => setGenderFilter(e.target.value)}>
             <option>All</option>
             <option>Male</option>
             <option>Female</option>
@@ -745,7 +782,7 @@ function ExpensesTab({ expenses, setExpenses, workers }) {
 /* ---------------------------------- Workers Tab (activity) ---------------------------------- */
 
 function WorkersTab({ workers, setWorkers, activities, setActivities, clothTypes, setClothTypes }) {
-  const [newWorker, setNewWorker] = useState("");
+  const [newWorker, setWorkerName] = useState("");
   const [newClothType, setNewClothType] = useState("");
   const [actDraft, setActDraft] = useState({ worker: "", clothType: "", qty: "1", date: todayStr() });
   const [metric, setMetric] = useState("by_worker");
@@ -755,7 +792,7 @@ function WorkersTab({ workers, setWorkers, activities, setActivities, clothTypes
     const name = newWorker.trim();
     if (!name || workers.includes(name)) return;
     setWorkers((prev) => [...prev, name]);
-    setNewWorker("");
+    setWorkerName("");
   }
   function removeWorker(name) {
     setWorkers((prev) => prev.filter((w) => w !== name));
@@ -795,7 +832,7 @@ function WorkersTab({ workers, setWorkers, activities, setActivities, clothTypes
         <Card className="p-5">
           <SectionTitle sub="Keep a running list of your tailors.">Workers</SectionTitle>
           <div className="flex gap-2 mb-3">
-            <input className={textInputCls} placeholder="Worker name" value={newWorker} onChange={(e) => setNewWorker(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addWorker()} />
+            <input className={textInputCls} placeholder="Worker name" value={newWorker} onChange={(e) => setWorkerName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addWorker()} />
             <button className={btnPrimary} onClick={addWorker}><Plus className="h-4 w-4" /></button>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -1045,6 +1082,18 @@ function DashboardTab({ orders, expenses }) {
         <ChartTypeAndMetricPicker metric={metric} setMetric={setMetric} chartType={chartType} setChartType={setChartType} metricOptions={metricOptions} />
         <div className="mt-4"><ChartRenderer data={chartData} type={chartType} /></div>
       </Card>
+        <Card className="p-5 flex justify-between items-center bg-rose-50 border-rose-200">
+        <div>
+          <h3 className="text-rose-800 font-medium">Reset Orders</h3>
+          <p className="text-sm text-rose-600">This will permanently delete all order data.</p>
+        </div>
+        <button 
+          onClick={() => resetData("orders")} 
+          className="px-4 py-2 bg-rose-600 text-white rounded-md text-sm font-medium hover:bg-rose-700 transition-colors"
+        >
+          Reset All Orders
+        </button>
+      </Card>
     </div>
   );
 }
@@ -1066,7 +1115,6 @@ function LoginScreen({ onLogin }) {
     setIsAttempting(true);
     setError("");
 
-    // Test the credentials against the Google Sheet
     try {
       const res = await fetch(`${API_URL}?key=clothTypes&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`);
       const data = await res.json();
@@ -1075,7 +1123,6 @@ function LoginScreen({ onLogin }) {
         setError("Incorrect username or password.");
         setIsAttempting(false);
       } else {
-        // Success! Save to temporary session and enter app
         sessionStorage.setItem("vvsk_user", username);
         sessionStorage.setItem("vvsk_pass", password);
         onLogin();
@@ -1142,6 +1189,10 @@ function App() {
   const [tab, setTab] = useState("dashboard");
   const [loaded, setLoaded] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  
+  // The Gatekeeper: prevents saving until data is fully loaded
+  const isReady = useRef(false);
+
   const [orders, setOrders] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [workers, setWorkers] = useState([]);
@@ -1150,11 +1201,6 @@ function App() {
   const [clothTypes, setClothTypes] = useState(["Pant", "Shirt", "Trouser", "Top", "Bottom", "Coat", "Binoform"]);
 
   useEffect(() => {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap";
-    document.head.appendChild(link);
-
     (async () => {
       setOrders(await loadKey(KEYS.orders, []));
       setExpenses(await loadKey(KEYS.expenses, []));
@@ -1162,16 +1208,25 @@ function App() {
       setActivities(await loadKey(KEYS.activities, []));
       setPayRates(await loadKey(KEYS.payRates, {}));
       setClothTypes(await loadKey(KEYS.clothTypes, ["Pant", "Shirt", "Trouser", "Top", "Bottom", "Coat", "Binoform"]));
+      
       setLoaded(true);
+      
+      // SAFETY DELAY: Wait 2 seconds for data to settle, then open the Gatekeeper
+      setTimeout(() => {
+        isReady.current = true;
+        console.log("App ready: Auto-save enabled.");
+      }, 2000);
     })();
   }, []);
 
-  useEffect(() => { if (loaded) saveKey(KEYS.orders, orders); }, [orders, loaded]);
-  useEffect(() => { if (loaded) saveKey(KEYS.expenses, expenses); }, [expenses, loaded]);
-  useEffect(() => { if (loaded) saveKey(KEYS.workers, workers); }, [workers, loaded]);
-  useEffect(() => { if (loaded) saveKey(KEYS.activities, activities); }, [activities, loaded]);
-  useEffect(() => { if (loaded) saveKey(KEYS.payRates, payRates); }, [payRates, loaded]);
-  useEffect(() => { if (loaded) saveKey(KEYS.clothTypes, clothTypes); }, [clothTypes, loaded]);
+  // Protected auto-save hooks
+  // These will ONLY fire if isReady.current is true
+  useEffect(() => { if (isReady.current) saveKey(KEYS.orders, orders); }, [orders]);
+  useEffect(() => { if (isReady.current) saveKey(KEYS.expenses, expenses); }, [expenses]);
+  useEffect(() => { if (isReady.current) saveKey(KEYS.workers, workers); }, [workers]);
+  useEffect(() => { if (isReady.current) saveKey(KEYS.activities, activities); }, [activities]);
+  useEffect(() => { if (isReady.current) saveKey(KEYS.payRates, payRates); }, [payRates]);
+  useEffect(() => { if (isReady.current) saveKey(KEYS.clothTypes, clothTypes); }, [clothTypes]);
 
   if (!isLoggedIn) {
     return (
