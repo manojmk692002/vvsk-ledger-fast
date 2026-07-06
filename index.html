@@ -129,6 +129,23 @@ async function saveKey(key, value) {
   }
 }
 
+async function resetData(key) {
+  if (!confirm("Are you sure? This will permanently delete all data in " + key + ".")) return;
+  
+  const { username, password } = getCredentials();
+  try {
+    await fetch(API_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "clear", key: key, username, password })
+    });
+    window.location.reload(); 
+  } catch (e) {
+    console.error("Reset failed", e);
+  }
+}
+
 /* ---------------------------------- small UI atoms ---------------------------------- */
 
 function Card({ children, className = "" }) {
