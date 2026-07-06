@@ -107,10 +107,14 @@ const getCredentials = () => ({
 async function loadKey(key, fallback) {
   const { username, password } = getCredentials();
   try {
-    const res = await fetch(`${API_URL}?key=${key}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`);
+    // We add &t={timestamp} so the browser thinks this is a brand new request every time
+    const url = `${API_URL}?key=${key}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&t=${new Date().getTime()}`;
+    const res = await fetch(url);
     const data = await res.json();
+    
     return data && !data.error && (Array.isArray(data) ? data.length !== 0 : Object.keys(data).length !== 0) ? data : fallback;
   } catch (e) {
+    console.error("Failed to load " + key, e);
     return fallback;
   }
 }
