@@ -1183,8 +1183,8 @@ function App() {
   const [loaded, setLoaded] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   
-  // Ref to prevent initial auto-save
-  const isInitialLoad = useRef(true);
+  // The Gatekeeper: prevents saving until data is fully loaded
+  const isReady = useRef(false);
 
   const [orders, setOrders] = useState([]);
   const [expenses, setExpenses] = useState([]);
@@ -1204,20 +1204,22 @@ function App() {
       
       setLoaded(true);
       
-      // Allow saving to Google Sheets only after data has finished loading and settling
+      // SAFETY DELAY: Wait 2 seconds for data to settle, then open the Gatekeeper
       setTimeout(() => {
-        isInitialLoad.current = false;
+        isReady.current = true;
+        console.log("App ready: Auto-save enabled.");
       }, 2000);
     })();
   }, []);
 
   // Protected auto-save hooks
-  useEffect(() => { if (!isInitialLoad.current) saveKey(KEYS.orders, orders); }, [orders]);
-  useEffect(() => { if (!isInitialLoad.current) saveKey(KEYS.expenses, expenses); }, [expenses]);
-  useEffect(() => { if (!isInitialLoad.current) saveKey(KEYS.workers, workers); }, [workers]);
-  useEffect(() => { if (!isInitialLoad.current) saveKey(KEYS.activities, activities); }, [activities]);
-  useEffect(() => { if (!isInitialLoad.current) saveKey(KEYS.payRates, payRates); }, [payRates]);
-  useEffect(() => { if (!isInitialLoad.current) saveKey(KEYS.clothTypes, clothTypes); }, [clothTypes]);
+  // These will ONLY fire if isReady.current is true
+  useEffect(() => { if (isReady.current) saveKey(KEYS.orders, orders); }, [orders]);
+  useEffect(() => { if (isReady.current) saveKey(KEYS.expenses, expenses); }, [expenses]);
+  useEffect(() => { if (isReady.current) saveKey(KEYS.workers, workers); }, [workers]);
+  useEffect(() => { if (isReady.current) saveKey(KEYS.activities, activities); }, [activities]);
+  useEffect(() => { if (isReady.current) saveKey(KEYS.payRates, payRates); }, [payRates]);
+  useEffect(() => { if (isReady.current) saveKey(KEYS.clothTypes, clothTypes); }, [clothTypes]);
 
   if (!isLoggedIn) {
     return (
