@@ -402,15 +402,15 @@ function OrdersTab({ orders, setOrders }) {
   }
 
 function saveOrder() {
-  // Fix: Force values to String before calling trim()
+  // Force conversion to String so .trim() always works
   const nameStr = String(draft.name || "").trim();
   const mobileStr = String(draft.mobile || "").trim();
-  
+
   if (!nameStr || !mobileStr) {
-    alert("Please enter both Name and Mobile Number.");
+    alert("Please enter Name and Mobile Number");
     return;
   }
-  
+
   if (draft.id) {
     setOrders((prev) => prev.map((o) => (o.id === draft.id ? { ...draft, name: nameStr, mobile: mobileStr } : o)));
   } else {
