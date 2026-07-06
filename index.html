@@ -1060,13 +1060,10 @@ function DashboardTab({ orders, expenses }) {
         <ChartTypeAndMetricPicker metric={metric} setMetric={setMetric} chartType={chartType} setChartType={setChartType} metricOptions={metricOptions} />
         <div className="mt-4"><ChartRenderer data={chartData} type={chartType} /></div>
       </Card>
-    </div>
-
-      {/* ADD THE RESET BUTTON HERE */}
-      <Card className="p-5 flex justify-between items-center bg-rose-50 border-rose-100">
+        <Card className="p-5 flex justify-between items-center bg-rose-50 border-rose-200">
         <div>
-          <h3 className="text-rose-800 font-medium">Danger Zone</h3>
-          <p className="text-sm text-rose-600">This will wipe your orders and cannot be undone.</p>
+          <h3 className="text-rose-800 font-medium">Reset Orders</h3>
+          <p className="text-sm text-rose-600">This will permanently delete all order data.</p>
         </div>
         <button 
           onClick={() => resetData("orders")} 
