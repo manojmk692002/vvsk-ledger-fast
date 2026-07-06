@@ -104,25 +104,27 @@ const getCredentials = () => ({
   password: sessionStorage.getItem("vvsk_pass")
 });
 
-async function loadKey(key, fallback) {
+async function loadKey(key, fallback, retries = 2) {
   const { username, password } = getCredentials();
-  try {
-    // Adding a timestamp so the browser NEVER uses old cache
-    const url = `${API_URL}?key=${key}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&t=${Date.now()}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    
-    // If the backend had an error reading the sheet, don't pretend it's empty
-    if (data && data.status === "error") {
-      console.error("Backend error reading sheet: " + key);
-      return fallback;
+  
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const url = `${API_URL}?key=${key}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&t=${Date.now()}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      
+      // If we got valid data, return it immediately
+      if (data && !data.error) return data;
+      
+      // If we got an error, we continue to the next iteration (retry)
+    } catch (e) {
+      console.warn(`Attempt ${attempt + 1} failed for ${key}, retrying...`);
     }
-    
-    return data && !data.error && (Array.isArray(data) ? data.length !== 0 : Object.keys(data).length !== 0) ? data : fallback;
-  } catch (e) {
-    console.error("Network error loading: " + key, e);
-    return fallback;
+    // Wait 1 second before retrying
+    await new Promise(resolve => setTimeout(resolve, 1000));
   }
+  
+  return fallback;
 }
 
 async function saveKey(key, value) {
