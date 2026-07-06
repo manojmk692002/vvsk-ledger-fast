@@ -127,13 +127,15 @@ async function loadKey(key, fallback) {
 
 async function saveKey(key, value) {
   const { username, password } = getCredentials();
+  console.log(`Attempting to save ${key}...`); // DEBUG
   try {
-    await fetch(API_URL, {
+    const response = await fetch(API_URL, {
       method: "POST",
       mode: "no-cors",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "save", key: key, value: value, username, password })
     });
+    console.log(`Save request sent for ${key}.`); // DEBUG
   } catch (e) {
     console.error("Save failed", e);
   }
@@ -399,15 +401,20 @@ function OrdersTab({ orders, setOrders }) {
     }));
   }
 
-  function saveOrder() {
-    if (!draft.name.trim() || !draft.mobile.trim()) return;
-    if (draft.id) {
-      setOrders((prev) => prev.map((o) => (o.id === draft.id ? { ...draft } : o)));
-    } else {
-      setOrders((prev) => [...prev, { ...draft, id: uid() }]);
-    }
-    setDraft(emptyDraft());
+function saveOrder() {
+  if (!draft.name.trim() || !draft.mobile.trim()) return;
+  
+  if (draft.id) {
+    // Force a complete new array reference for the update
+    setOrders((prev) => {
+      const updated = prev.map((o) => (o.id === draft.id ? { ...draft } : o));
+      return [...updated]; 
+    });
+  } else {
+    setOrders((prev) => [...prev, { ...draft, id: uid() }]);
   }
+  setDraft(emptyDraft());
+}
   function editOrder(o) {
     setDraft(JSON.parse(JSON.stringify(o)));
     window.scrollTo({ top: 0, behavior: "smooth" });
