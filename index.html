@@ -402,16 +402,19 @@ function OrdersTab({ orders, setOrders }) {
   }
 
 function saveOrder() {
-  if (!draft.name.trim() || !draft.mobile.trim()) return;
+  // Fix: Force values to String before calling trim()
+  const nameStr = String(draft.name || "").trim();
+  const mobileStr = String(draft.mobile || "").trim();
+  
+  if (!nameStr || !mobileStr) {
+    alert("Please enter both Name and Mobile Number.");
+    return;
+  }
   
   if (draft.id) {
-    // Force a complete new array reference for the update
-    setOrders((prev) => {
-      const updated = prev.map((o) => (o.id === draft.id ? { ...draft } : o));
-      return [...updated]; 
-    });
+    setOrders((prev) => prev.map((o) => (o.id === draft.id ? { ...draft, name: nameStr, mobile: mobileStr } : o)));
   } else {
-    setOrders((prev) => [...prev, { ...draft, id: uid() }]);
+    setOrders((prev) => [...prev, { ...draft, id: uid(), name: nameStr, mobile: mobileStr }]);
   }
   setDraft(emptyDraft());
 }
