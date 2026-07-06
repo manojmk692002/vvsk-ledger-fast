@@ -1193,7 +1193,6 @@ function App() {
   const [loaded, setLoaded] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   
-  // The Gatekeeper: prevents saving until data is fully loaded
   const isReady = useRef(false);
 
   const [orders, setOrders] = useState([]);
@@ -1203,29 +1202,29 @@ function App() {
   const [payRates, setPayRates] = useState({});
   const [clothTypes, setClothTypes] = useState(["Pant", "Shirt", "Trouser", "Top", "Bottom", "Coat", "Binoform"]);
 
-  useEffect(() => {
-  if (isLoggedIn) { // Only trigger the fetch when the user is logged in
-    (async () => {
-      setOrders(await loadKey(KEYS.orders, []));
-      setExpenses(await loadKey(KEYS.expenses, []));
-      setWorkers(await loadKey(KEYS.workers, []));
-      setActivities(await loadKey(KEYS.activities, []));
-      setPayRates(await loadKey(KEYS.payRates, {}));
-      setClothTypes(await loadKey(KEYS.clothTypes, ["Pant", "Shirt", "Trouser", "Top", "Bottom", "Coat", "Binoform"]));
-      
-      setLoaded(true);
-      
-      // SAFETY DELAY: Wait 2 seconds for data to settle, then open the Gatekeeper
-      setTimeout(() => {
-        isReady.current = true;
-        console.log("App ready: Auto-save enabled.");
-      }, 2000);
-    })();
+  // 1. THIS FUNCTION REPLACES THE USEEFFECT
+  // It only runs when the user explicitly clicks "Access Dashboard"
+  async function initializeApp() {
+    setIsLoggedIn(true); // Log the user in
+    
+    // Now that we are logged in, we fetch the data immediately
+    setOrders(await loadKey(KEYS.orders, []));
+    setExpenses(await loadKey(KEYS.expenses, []));
+    setWorkers(await loadKey(KEYS.workers, []));
+    setActivities(await loadKey(KEYS.activities, []));
+    setPayRates(await loadKey(KEYS.payRates, {}));
+    setClothTypes(await loadKey(KEYS.clothTypes, ["Pant", "Shirt", "Trouser", "Top", "Bottom", "Coat", "Binoform"]));
+    
+    setLoaded(true);
+    
+    // Enable auto-save
+    setTimeout(() => {
+      isReady.current = true;
+      console.log("App ready: Auto-save enabled.");
+    }, 1000);
   }
-}, [isLoggedIn]); // <--- This ensures it waits for login
 
-  // Protected auto-save hooks
-  // These will ONLY fire if isReady.current is true
+  // Auto-save hooks (Keep these as they are)
   useEffect(() => { if (isReady.current) saveKey(KEYS.orders, orders); }, [orders]);
   useEffect(() => { if (isReady.current) saveKey(KEYS.expenses, expenses); }, [expenses]);
   useEffect(() => { if (isReady.current) saveKey(KEYS.workers, workers); }, [workers]);
@@ -1236,11 +1235,9 @@ function App() {
   if (!isLoggedIn) {
     return (
       <div style={{ fontFamily: "'Work Sans', sans-serif" }}>
-        <style>{`
-          .font-display { font-family: 'Fraunces', serif; }
-          .font-mono { font-family: 'IBM Plex Mono', monospace; }
-        `}</style>
-        <LoginScreen onLogin={() => setIsLoggedIn(true)} />
+        <style>{`.font-display { font-family: 'Fraunces', serif; } .font-mono { font-family: 'IBM Plex Mono', monospace; }`}</style>
+        {/* 2. PASS THE INITIALIZER TO LOGIN SCREEN */}
+        <LoginScreen onLogin={initializeApp} />
       </div>
     );
   }
