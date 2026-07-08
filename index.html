@@ -3,10 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
-    <meta http-equiv="Pragma" content="no-cache" />
-    <meta http-equiv="Expires" content="0" />
     <title>Tailor Dashboard</title>
     
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -35,6 +31,40 @@ const API_URL = "https://script.google.com/macros/s/AKfycbyKnDIvktjaRSITpULKVXwg
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const money = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+function downloadCSV(dataArray, filename) {
+  if (!dataArray || dataArray.length === 0) {
+    alert("No data to export!");
+    return;
+  }
+  
+  // Get headers (keys of the first object)
+  const headers = Object.keys(dataArray[0]);
+  const csvRows = [headers.join(',')]; // Add header row
+  
+  // Loop through rows
+  dataArray.forEach(item => {
+    const row = headers.map(header => {
+      let val = item[header] === null || item[header] === undefined ? "" : item[header];
+      // If it's a complex object (like garments), stringify it
+      if (typeof val === 'object') val = JSON.stringify(val);
+      
+      // Escape quotes and wrap in quotes to prevent comma issues
+      let str = String(val).replace(/"/g, '""');
+      return `"${str}"`;
+    });
+    csvRows.push(row.join(','));
+  });
+  
+  // Create a hidden link and click it to download
+  const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
 
 const PALETTE = ["#B7791F", "#2C3E50", "#7C9885", "#B33F3F", "#6B5B95", "#3D8B8B", "#A9713C", "#4A5859"];
 
@@ -108,27 +138,25 @@ const getCredentials = () => ({
   password: sessionStorage.getItem("vvsk_pass")
 });
 
-async function loadKey(key, fallback, retries = 2) {
+async function loadKey(key, fallback) {
   const { username, password } = getCredentials();
-  
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const url = `${API_URL}?key=${key}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&t=${Date.now()}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      
-      // If we got valid data, return it immediately
-      if (data && !data.error) return data;
-      
-      // If we got an error, we continue to the next iteration (retry)
-    } catch (e) {
-      console.warn(`Attempt ${attempt + 1} failed for ${key}, retrying...`);
+  try {
+    // Adding a timestamp so the browser NEVER uses old cache
+    const url = `${API_URL}?key=${key}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&t=${Date.now()}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    
+    // If the backend had an error reading the sheet, don't pretend it's empty
+    if (data && data.status === "error") {
+      console.error("Backend error reading sheet: " + key);
+      return fallback;
     }
-    // Wait 1 second before retrying
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    return data && !data.error && (Array.isArray(data) ? data.length !== 0 : Object.keys(data).length !== 0) ? data : fallback;
+  } catch (e) {
+    console.error("Network error loading: " + key, e);
+    return fallback;
   }
-  
-  return fallback;
 }
 
 async function saveKey(key, value) {
@@ -1066,6 +1094,7 @@ function DashboardTab({ orders, expenses }) {
     { value: "profit_over_time", label: "Profit over time" },
     { value: "expenses_by_type", label: "Expenses by type" },
   ];
+  
   const chartData = useMemo(() => {
     switch (metric) {
       case "profit_by_settype": return sumBy(orders, (o) => o.setType, (o) => o.profit);
@@ -1091,7 +1120,31 @@ function DashboardTab({ orders, expenses }) {
         <ChartTypeAndMetricPicker metric={metric} setMetric={setMetric} chartType={chartType} setChartType={setChartType} metricOptions={metricOptions} />
         <div className="mt-4"><ChartRenderer data={chartData} type={chartType} /></div>
       </Card>
-        <Card className="p-5 flex justify-between items-center bg-rose-50 border-rose-200">
+
+      {/* --- NEW EXPORT CARD STARTS HERE --- */}
+      <Card className="p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-stone-50 border-stone-200">
+        <div>
+          <h3 className="text-slate-800 font-medium">Export Ledger Data</h3>
+          <p className="text-sm text-stone-600">Download your records as CSV files to open in Excel.</p>
+        </div>
+        <div className="flex gap-2 w-full sm:w-auto">
+          <button 
+            onClick={() => downloadCSV(orders, `VVSK_Orders_${todayStr()}.csv`)}
+            className="px-4 py-2 bg-white border border-stone-300 text-stone-700 rounded-md text-sm font-medium hover:bg-stone-100 transition-colors flex-1 sm:flex-none text-center"
+          >
+            Export Orders
+          </button>
+          <button 
+            onClick={() => downloadCSV(expenses, `VVSK_Expenses_${todayStr()}.csv`)}
+            className="px-4 py-2 bg-white border border-stone-300 text-stone-700 rounded-md text-sm font-medium hover:bg-stone-100 transition-colors flex-1 sm:flex-none text-center"
+          >
+            Export Expenses
+          </button>
+        </div>
+      </Card>
+      {/* --- NEW EXPORT CARD ENDS HERE --- */}
+
+      <Card className="p-5 flex justify-between items-center bg-rose-50 border-rose-200">
         <div>
           <h3 className="text-rose-800 font-medium">Reset Orders</h3>
           <p className="text-sm text-rose-600">This will permanently delete all order data.</p>
