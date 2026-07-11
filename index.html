@@ -3,6 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    
     <title>Tailor Dashboard</title>
     
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -22,40 +27,35 @@
           LayoutDashboard, Shirt, Wallet, Users, Banknote, TrendingUp,
           Plus, Trash2, Pencil, X, Check, Search, ChevronDown, ChevronRight
         } from 'https://esm.sh/lucide-react@0.360.0';
+        import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-/* ---------------------------------- Cloud Config ---------------------------------- */
-const API_URL = "https://script.google.com/macros/s/AKfycbyKnDIvktjaRSITpULKVXwgBsDF4LCTNvK1yIBCvkS8Jo9JFy_0w_m9Cq0oetxkMxkO/exec";
+/* ---------------------------------- Cloud Config (Supabase) ---------------------------------- */
+const SUPABASE_URL = 'https://pztkhjiownuinshyyuen.supabase.co/rest/v1/';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB6dGtoamlvd251aW5zaHl5dWVuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM3NDUyNTIsImV4cCI6MjA5OTMyMTI1Mn0.iLotNBFCpLpoxJPEXPp7j3K5c2qZ7N7WAi1jThAc3ro';
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* ---------------------------------- helpers ---------------------------------- */
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const money = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+
 function downloadCSV(dataArray, filename) {
   if (!dataArray || dataArray.length === 0) {
     alert("No data to export!");
     return;
   }
-  
-  // Get headers (keys of the first object)
   const headers = Object.keys(dataArray[0]);
-  const csvRows = [headers.join(',')]; // Add header row
-  
-  // Loop through rows
+  const csvRows = [headers.join(',')];
   dataArray.forEach(item => {
     const row = headers.map(header => {
       let val = item[header] === null || item[header] === undefined ? "" : item[header];
-      // If it's a complex object (like garments), stringify it
       if (typeof val === 'object') val = JSON.stringify(val);
-      
-      // Escape quotes and wrap in quotes to prevent comma issues
       let str = String(val).replace(/"/g, '""');
       return `"${str}"`;
     });
     csvRows.push(row.join(','));
   });
-  
-  // Create a hidden link and click it to download
   const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -133,68 +133,42 @@ function sortByDate(data) {
 /* ---------------------------------- storage ---------------------------------- */
 const KEYS = { orders: "orders", expenses: "expenses", workers: "workers", activities: "activities", payRates: "payRates", clothTypes: "clothTypes" };
 
-const getCredentials = () => ({
-  username: sessionStorage.getItem("vvsk_user"),
-  password: sessionStorage.getItem("vvsk_pass")
-});
-
 async function loadKey(key, fallback) {
-  const { username, password } = getCredentials();
-  try {
-    // Adding a timestamp so the browser NEVER uses old cache
-    const url = `${API_URL}?key=${key}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&t=${Date.now()}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    
-    // If the backend had an error reading the sheet, don't pretend it's empty
-    if (data && data.status === "error") {
-      console.error("Backend error reading sheet: " + key);
-      return fallback;
-    }
-    
-    return data && !data.error && (Array.isArray(data) ? data.length !== 0 : Object.keys(data).length !== 0) ? data : fallback;
-  } catch (e) {
-    console.error("Network error loading: " + key, e);
-    return fallback;
-  }
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return fallback;
+
+  const { data, error } = await supabase
+    .from('user_data')
+    .select('value')
+    .eq('key', key)
+    .eq('user_id', user.id)
+    .single();
+
+  if (error || !data) return fallback;
+  return data.value;
 }
 
 async function saveKey(key, value) {
-  const { username, password } = getCredentials();
-  console.log(`Attempting to save ${key}...`); // DEBUG
-  try {
-    const response = await fetch(API_URL, {
-      method: "POST",
-      mode: "no-cors",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "save", key: key, value: value, username, password })
-    });
-    console.log(`Save request sent for ${key}.`); // DEBUG
-  } catch (e) {
-    console.error("Save failed", e);
-  }
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+
+  const { error } = await supabase
+    .from('user_data')
+    .upsert({ 
+      user_id: user.id, 
+      key: key, 
+      value: value 
+    }, { onConflict: 'user_id, key' });
+
+  if (error) console.error(`Failed to save ${key}:`, error);
 }
 
 async function resetData(key) {
-  if (!confirm("Are you sure? This will permanently delete all data in " + key + ".")) return;
+  if (!confirm(`Are you sure? This will permanently delete all data in ${key}.`)) return;
   
-  const { username, password } = getCredentials();
-  try {
-    await fetch(API_URL, {
-      method: "POST",
-      mode: "no-cors",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "clear", key: key, username, password })
-    });
-    
-    // ⏳ CRITICAL FIX: Wait 2 seconds for Google to process the deletion before refreshing the page
-    setTimeout(() => {
-      window.location.reload(); 
-    }, 2000);
-    
-  } catch (e) {
-    console.error("Reset failed", e);
-  }
+  const { data: { user } } = await supabase.auth.getUser();
+  await supabase.from('user_data').delete().eq('key', key).eq('user_id', user.id);
+  window.location.reload();
 }
 
 /* ---------------------------------- small UI atoms ---------------------------------- */
@@ -436,7 +410,6 @@ function OrdersTab({ orders, setOrders }) {
   }
 
 function saveOrder() {
-  // Force conversion to String so .trim() always works
   const nameStr = String(draft.name || "").trim();
   const mobileStr = String(draft.mobile || "").trim();
 
@@ -467,7 +440,7 @@ function saveOrder() {
     if (statusFilter !== "All" && o.status !== statusFilter) return false;
     if (genderFilter !== "All" && o.gender !== genderFilter) return false;
     const q = search.trim().toLowerCase();
-    if (q && !(o.name.toLowerCase().includes(q) || o.mobile.includes(q))) return false;
+    if (q && !((o.name || "").toLowerCase().includes(q) || (o.mobile || "").includes(q))) return false;
     return true;
   });
 
@@ -584,17 +557,17 @@ function saveOrder() {
         ) : (
           <div className="divide-y divide-stone-100">
             {filtered.map((o) => (
-              <div key={o.id} className="py-3">
+              <div key={o.id || uid()} className="py-3">
                 <div className="flex items-center gap-3 flex-wrap">
                   <button onClick={() => setExpandedId(expandedId === o.id ? null : o.id)} className="text-stone-400">
                     {expandedId === o.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                   </button>
                   <div className="min-w-[140px]">
-                    <div className="font-medium text-slate-800 text-sm">{o.name}</div>
-                    <div className="text-xs text-stone-500 font-mono">{o.mobile}</div>
+                    <div className="font-medium text-slate-800 text-sm">{o.name || "Unnamed"}</div>
+                    <div className="text-xs text-stone-500 font-mono">{o.mobile || "—"}</div>
                   </div>
                   <span className="text-xs px-2 py-1 rounded bg-stone-100 text-stone-600">{o.gender} · {o.setType}</span>
-                  <select value={o.status} onChange={(e) => updateStatus(o.id, e.target.value)} className={`text-xs rounded px-2 py-1 border-0 font-medium ${STATUS_COLOR[o.status]}`}>
+                  <select value={o.status} onChange={(e) => updateStatus(o.id, e.target.value)} className={`text-xs rounded px-2 py-1 border-0 font-medium ${STATUS_COLOR[o.status] || STATUS_COLOR.Pending}`}>
                     {STATUS_OPTIONS.map((s) => <option key={s}>{s}</option>)}
                   </select>
                   <span className="text-xs text-stone-500 font-mono ml-auto">{o.date}</span>
@@ -604,10 +577,10 @@ function saveOrder() {
                 </div>
                 {expandedId === o.id && (
                   <div className="mt-3 ml-7 grid sm:grid-cols-2 gap-2">
-                    {o.garments.map((g) => (
+                    {(o.garments || []).map((g) => (
                       <div key={g.id} className="text-xs bg-stone-50 rounded p-2 border border-stone-100">
                         <div className="font-semibold text-slate-700 mb-1">{g.type}</div>
-                        {g.fields.map((f) => (
+                        {(g.fields || []).map((f) => (
                           <div key={f.id} className="flex justify-between font-mono text-stone-600">
                             <span>{f.name}</span><span>{f.value || "—"}</span>
                           </div>
@@ -1121,7 +1094,6 @@ function DashboardTab({ orders, expenses }) {
         <div className="mt-4"><ChartRenderer data={chartData} type={chartType} /></div>
       </Card>
 
-      {/* --- NEW EXPORT CARD STARTS HERE --- */}
       <Card className="p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-stone-50 border-stone-200">
         <div>
           <h3 className="text-slate-800 font-medium">Export Ledger Data</h3>
@@ -1142,7 +1114,6 @@ function DashboardTab({ orders, expenses }) {
           </button>
         </div>
       </Card>
-      {/* --- NEW EXPORT CARD ENDS HERE --- */}
 
       <Card className="p-5 flex justify-between items-center bg-rose-50 border-rose-200">
         <div>
@@ -1161,37 +1132,31 @@ function DashboardTab({ orders, expenses }) {
 }
 
 /* ---------------------------------- Login Screen ---------------------------------- */
+
 function LoginScreen({ onLogin }) {
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isAttempting, setIsAttempting] = useState(false);
   const [error, setError] = useState("");
-  
+
   const handleLogin = async (e) => {
     e.preventDefault();
-    if (!username || !password) {
-      setError("Please fill in both fields.");
-      return;
-    }
-
+    if (!email || !password) return setError("Please fill in both fields.");
+    
     setIsAttempting(true);
     setError("");
 
-    try {
-      const res = await fetch(`${API_URL}?key=clothTypes&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`);
-      const data = await res.json();
-      
-      if (data.error === "Access Denied") {
-        setError("Incorrect username or password.");
-        setIsAttempting(false);
-      } else {
-        sessionStorage.setItem("vvsk_user", username);
-        sessionStorage.setItem("vvsk_pass", password);
-        onLogin();
-      }
-    } catch (err) {
-      setError("Network error. Please try again.");
-      setIsAttempting(false);
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email,
+      password: password,
+    });
+
+    setIsAttempting(false);
+
+    if (error) {
+      setError(error.message);
+    } else {
+      onLogin();
     }
   };
 
@@ -1206,13 +1171,13 @@ function LoginScreen({ onLogin }) {
           <p className="text-stone-500 text-sm mt-1">Please log in to view the ledger</p>
         </div>
         <form onSubmit={handleLogin} className="space-y-4">
-          <Field label="Username">
+          <Field label="Email">
             <input 
-              type="text" 
+              type="email" 
               className={textInputCls} 
-              value={username} 
-              onChange={(e) => setUsername(e.target.value)} 
-              placeholder="e.g. admin123"
+              value={email} 
+              onChange={(e) => setEmail(e.target.value)} 
+              placeholder="e.g. admin@vvsk.com"
             />
           </Field>
           <Field label="Password">
@@ -1259,22 +1224,20 @@ function App() {
   const [workers, setWorkers] = useState([]);
   const [activities, setActivities] = useState([]);
   const [payRates, setPayRates] = useState({});
-  const [clothTypes, setClothTypes] = useState(["Pant", "Shirt", "Trouser", "Top", "Bottom", "Coat", "Binoform"]);
+  const [clothTypes, setClothTypes] = useState([]);
 
-  // --- NEW: AUTO-LOGIN IF YOU REFRESH THE PAGE ---
   useEffect(() => {
-    const u = sessionStorage.getItem("vvsk_user");
-    const p = sessionStorage.getItem("vvsk_pass");
-    if (u && p && !isLoggedIn) {
-      initializeApp();
-    }
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session && !isLoggedIn) {
+        initializeApp();
+      }
+    });
   }, []);
 
   async function initializeApp() {
     setIsLoggedIn(true); 
     
     try {
-      // --- NEW: PARALLEL LOADING (Makes the app load 5x faster) ---
       const [oData, eData, wData, aData, pData, cData] = await Promise.all([
         loadKey(KEYS.orders, []),
         loadKey(KEYS.expenses, []),
@@ -1297,14 +1260,12 @@ function App() {
     
     setLoaded(true);
     
-    // Safety delay before enabling auto-save
     setTimeout(() => {
       isReady.current = true;
       console.log("App ready: Auto-save enabled.");
     }, 2000);
   }
 
-  // Auto-save hooks
   useEffect(() => { if (isReady.current) saveKey(KEYS.orders, orders); }, [orders]);
   useEffect(() => { if (isReady.current) saveKey(KEYS.expenses, expenses); }, [expenses]);
   useEffect(() => { if (isReady.current) saveKey(KEYS.workers, workers); }, [workers]);
