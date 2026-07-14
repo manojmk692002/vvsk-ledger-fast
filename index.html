@@ -25,7 +25,7 @@
         } from 'https://esm.sh/recharts@2.12.0';
         import {
           LayoutDashboard, Shirt, Wallet, Users, Banknote, TrendingUp,
-          Plus, Trash2, Pencil, X, Check, Search, ChevronDown, ChevronRight, FolderPlus, FolderOpen
+          Plus, Trash2, Pencil, X, Check, Search, ChevronDown, ChevronRight, FolderPlus, FolderOpen, Image
         } from 'https://esm.sh/lucide-react@0.360.0';
         import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -131,7 +131,7 @@ function sortByDate(data) {
 }
 
 /* ---------------------------------- storage (Multi-Ledger) ---------------------------------- */
-const KEYS = { orders: "orders", expenses: "expenses", workers: "workers", activities: "activities", payRates: "payRates", clothTypes: "clothTypes" };
+const KEYS = { orders: "orders", expenses: "expenses", workers: "workers", activities: "activities", payRates: "payRates", clothTypes: "clothTypes", catalog: "catalog" };
 
 async function loadKey(ledger, key, fallback) {
   const { data: { user } } = await supabase.auth.getUser();
@@ -802,12 +802,19 @@ function SalaryTab({ workers, clothTypes, payRates, setPayRates, expenses, setEx
 }
 
 /* ---------------------------------- Dashboard Tab ---------------------------------- */
-function DashboardTab({ orders, expenses, currentLedger }) {
+function DashboardTab({ orders, expenses, currentLedger, catalog, setCatalog }) {
   const [metric, setMetric] = useState("profit_by_settype");
   const [chartType, setChartType] = useState("bar");
+  
+  // Catalog State
+  const [showAddDesign, setShowAddDesign] = useState(false);
+  const [newDesignName, setNewDesignName] = useState("");
+  const [newDesignUrl, setNewDesignUrl] = useState("");
+
   const totalProfit = orders.reduce((s, o) => s + (parseFloat(o.profit) || 0), 0);
   const totalExpenses = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
   const metricOptions = [ { value: "profit_by_settype", label: "Profit by set type" }, { value: "orders_by_status", label: "Orders by status" } ];
+  
   const chartData = useMemo(() => {
     switch (metric) {
       case "profit_by_settype": return sumBy(orders, (o) => o.setType, (o) => o.profit);
@@ -815,6 +822,14 @@ function DashboardTab({ orders, expenses, currentLedger }) {
       default: return [];
     }
   }, [metric, orders, expenses]);
+
+  function addDesign() {
+    if (!newDesignName || !newDesignUrl) return;
+    setCatalog((prev) => [...prev, { id: uid(), title: newDesignName, url: newDesignUrl }]);
+    setNewDesignName("");
+    setNewDesignUrl("");
+    setShowAddDesign(false);
+  }
 
   return (
     <div className="space-y-6">
@@ -824,6 +839,53 @@ function DashboardTab({ orders, expenses, currentLedger }) {
         <StatCard label="Total profit" value={money(totalProfit)} icon={TrendingUp} tone="emerald" />
         <StatCard label="Net profit" value={money(totalProfit - totalExpenses)} icon={Wallet} tone={totalProfit - totalExpenses >= 0 ? "emerald" : "rose"} />
       </div>
+
+      {/* --- NEW CATALOG SECTION --- */}
+      <Card className="p-5">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
+          <SectionTitle sub="Global design catalog visible across all ledgers.">Our Catalog</SectionTitle>
+          <button onClick={() => setShowAddDesign(!showAddDesign)} className={btnGhost}>
+            {showAddDesign ? "Cancel" : <><Plus className="h-4 w-4" /> Add Design</>}
+          </button>
+        </div>
+
+        {showAddDesign && (
+          <div className="grid sm:grid-cols-3 gap-3 mb-6 bg-stone-50 p-4 rounded-md border border-stone-200">
+            <Field label="Design Name">
+              <input className={textInputCls} value={newDesignName} onChange={(e) => setNewDesignName(e.target.value)} placeholder="e.g. Blue School Uniform" />
+            </Field>
+            <Field label="Image URL (Link)">
+              <input className={textInputCls} value={newDesignUrl} onChange={(e) => setNewDesignUrl(e.target.value)} placeholder="https://..." />
+            </Field>
+            <div className="flex items-end">
+              <button onClick={addDesign} className={`${btnPrimary} w-full justify-center`}><Check className="h-4 w-4"/> Save Design</button>
+            </div>
+          </div>
+        )}
+
+        {(!catalog || catalog.length === 0) ? (
+          <EmptyState text="No designs added yet. Click 'Add Design' to link an image." />
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            {catalog.map(item => (
+              <div key={item.id} className="group relative rounded-md overflow-hidden border border-stone-200 bg-stone-100 aspect-square flex flex-col">
+                <img src={item.url} alt={item.title} className="w-full h-full object-cover" onError={(e) => { e.target.src = 'https://via.placeholder.com/400?text=Image+Not+Found'; }} />
+                <div className="absolute inset-x-0 bottom-0 bg-slate-900/80 p-2.5 translate-y-full group-hover:translate-y-0 transition-transform duration-200">
+                  <p className="text-white text-xs font-medium truncate">{item.title}</p>
+                </div>
+                <button 
+                  onClick={() => setCatalog(prev => prev.filter(c => c.id !== item.id))} 
+                  className="absolute top-2 right-2 p-1.5 bg-rose-600/90 hover:bg-rose-600 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+      {/* --- END CATALOG SECTION --- */}
+
       <Card className="p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-stone-50 border-stone-200">
         <div><h3 className="text-slate-800 font-medium">Export {currentLedger} Data</h3><p className="text-sm text-stone-600">Download your records as CSV files.</p></div>
         <div className="flex gap-2 w-full sm:w-auto">
@@ -831,6 +893,7 @@ function DashboardTab({ orders, expenses, currentLedger }) {
           <button onClick={() => downloadCSV(expenses, `VVSK_Expenses_${currentLedger}_${todayStr()}.csv`)} className="px-4 py-2 bg-white border border-stone-300 text-sm font-medium rounded-md">Export Expenses</button>
         </div>
       </Card>
+
       <Card className="p-5 flex justify-between items-center bg-rose-50 border-rose-200">
         <div><h3 className="text-rose-800 font-medium">Reset Orders in {currentLedger}</h3><p className="text-sm text-rose-600">This permanently deletes order data for this ledger.</p></div>
         <button onClick={() => resetData(currentLedger, "orders")} className="px-4 py-2 bg-rose-600 text-white rounded-md text-sm">Reset Orders</button>
@@ -946,6 +1009,7 @@ function App() {
   const [activities, setActivities] = useState([]);
   const [payRates, setPayRates] = useState({});
   const [clothTypes, setClothTypes] = useState([]);
+  const [catalog, setCatalog] = useState([]); // <-- NEW STATE
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -959,11 +1023,17 @@ function App() {
     isReady.current = false;
     
     try {
-      const [oData, eData, wData, aData, pData, cData] = await Promise.all([
-        loadKey(ledgerName, KEYS.orders, []), loadKey(ledgerName, KEYS.expenses, []), loadKey(ledgerName, KEYS.workers, []),
-        loadKey(ledgerName, KEYS.activities, []), loadKey(ledgerName, KEYS.payRates, {}), loadKey(ledgerName, KEYS.clothTypes, ["Pant", "Shirt", "Trouser", "Top", "Bottom", "Coat", "Binoform"])
+      // NOTE: We load catalog from "GLOBAL", everything else from ledgerName
+      const [oData, eData, wData, aData, pData, cData, catData] = await Promise.all([
+        loadKey(ledgerName, KEYS.orders, []), 
+        loadKey(ledgerName, KEYS.expenses, []), 
+        loadKey(ledgerName, KEYS.workers, []),
+        loadKey(ledgerName, KEYS.activities, []), 
+        loadKey(ledgerName, KEYS.payRates, {}), 
+        loadKey(ledgerName, KEYS.clothTypes, ["Pant", "Shirt", "Trouser", "Top", "Bottom", "Coat", "Binoform"]),
+        loadKey("GLOBAL", KEYS.catalog, []) // <-- LOADS FROM GLOBAL LEDGER
       ]);
-      setOrders(oData); setExpenses(eData); setWorkers(wData); setActivities(aData); setPayRates(pData); setClothTypes(cData);
+      setOrders(oData); setExpenses(eData); setWorkers(wData); setActivities(aData); setPayRates(pData); setClothTypes(cData); setCatalog(catData);
     } catch (error) {
       console.error("Failed to load data:", error);
     }
@@ -977,7 +1047,7 @@ function App() {
   useEffect(() => { if (isReady.current) saveKey(currentLedger, KEYS.activities, activities); }, [activities, currentLedger]);
   useEffect(() => { if (isReady.current) saveKey(currentLedger, KEYS.payRates, payRates); }, [payRates, currentLedger]);
   useEffect(() => { if (isReady.current) saveKey(currentLedger, KEYS.clothTypes, clothTypes); }, [clothTypes, currentLedger]);
-
+  useEffect(() => { if (isReady.current) saveKey("GLOBAL", KEYS.catalog, catalog); }, [catalog]); // <-- SAVES TO GLOBAL LEDGER
   if (!isLoggedIn) {
     return (
       <div style={{ fontFamily: "'Work Sans', sans-serif" }}>
@@ -1033,7 +1103,7 @@ function App() {
           <div className="text-center text-stone-400 py-20">Loading {currentLedger}…</div>
         ) : (
           <>
-            {tab === "dashboard" && <DashboardTab orders={orders} expenses={expenses} currentLedger={currentLedger} />}
+            {tab === "dashboard" && <DashboardTab orders={orders} expenses={expenses} currentLedger={currentLedger} catalog={catalog} setCatalog={setCatalog} />}
             {tab === "orders" && <OrdersTab orders={orders} setOrders={setOrders} />}
             {tab === "income" && <IncomeTab orders={orders} />}
             {tab === "expenses" && <ExpensesTab expenses={expenses} setExpenses={setExpenses} workers={workers} />}
